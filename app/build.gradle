@@ -1,0 +1,61 @@
+plugins {
+    id 'com.android.application'
+}
+
+def keystorePath = System.getenv('KEYSTORE_PATH')
+def keystorePassword = System.getenv('KEYSTORE_PASSWORD')
+def keyAliasValue = System.getenv('KEY_ALIAS')
+def keyPasswordValue = System.getenv('KEY_PASSWORD')
+
+android {
+    namespace 'ch.fasrv.kanagarten'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'ch.fasrv.kanagarten'
+        minSdk 26
+        targetSdk 35
+        versionCode 1
+        versionName '1.0.0'
+        buildConfigField 'String', 'UPDATE_REPOSITORY', '"Nikoheld/kana-garten-android"'
+    }
+
+    signingConfigs {
+        release {
+            if (keystorePath && keystorePassword && keyAliasValue && keyPasswordValue) {
+                storeFile file(keystorePath)
+                storePassword keystorePassword
+                keyAlias keyAliasValue
+                keyPassword keyPasswordValue
+            }
+        }
+    }
+
+    buildTypes {
+        debug {
+            applicationIdSuffix '.debug'
+            versionNameSuffix '-debug'
+        }
+        release {
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            if (keystorePath && keystorePassword && keyAliasValue && keyPasswordValue) {
+                signingConfig signingConfigs.release
+            }
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    packaging {
+        resources.excludes += ['META-INF/DEPENDENCIES', 'META-INF/LICENSE*', 'META-INF/NOTICE*']
+    }
+}

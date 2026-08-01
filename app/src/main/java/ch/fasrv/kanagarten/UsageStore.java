@@ -1,0 +1,270 @@
+package ch.fasrv.kanagarten;
+
+import android.content.Context;
+import android.content.SharedPreferences;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
+
+public final class UsageStore {
+    private static final String PREFS = "kana_garten_native_v1";
+    private static final String SESSIONS = "usage_sessions";
+    private static final String PROGRESS = "progress_backup";
+    private static final DateTimeFormatter DATE = DateTimeFormatter.ISO_LOCAL_DATE;
+
+    private final SharedPreferences preferences;
+
+    public UsageStore(Context context) {
+        preferences = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+    }
+
+    public synchronized void recordSession(String mode, int durationSeconds, int itemCount) {
+        try {
+            JSONArray sessions = readSessionArray();
+            JSONObject entry = new JSONObject();
+            entry.put("date", LocalDate.now().format(DATE));
+            entry.put("timestamp", System.currentTimeMillis());
+            entry.put("mode", sanitizeMode(mode));
+            entry.put("durationSeconds", Math.max(1, durationSeconds));
+            entry.put("itemCount", Math.max(1, itemCount));
+            sessions.put(entry);
+
+            JSONArray trimmed = new JSONArray();
+            int start = Math.max(0, sessions.length() - 730);
+            for (int i = start; i < sessions.length(); i++) trimmed.put(sessions.get(i));
+            preferences.edit().putString(SESSIONS, trimmed.toString()).apply();
+        } catch (Exception ignored) {
+            // Eine beschädigte Statistik darf nie den Lernfortschritt blockieren.
+        }
+    }
+
+    public synchronized void backupProgress(String progressJson) {
+        if (progressJson == null || progressJson.length() < 2) return;
+        preferences.edit().putString(PROGRESS, progressJson).apply();
+    }
+
+    public synchronized String restoreProgress() {
+        return preferences.getString(PROGRESS, "");
+    }
+
+    public synchronized Snapshot snapshot() {
+        List<Session> sessions = readSessions();
+        LocalDate today = LocalDate.now();
+        Map<String, Integer> secondsByDate = new HashMap<>();
+        Map<String, Integer> secondsByMode = new LinkedHashMap<>();
+        secondsByMode.put("kana", 0);
+        secondsByMode.put("words", 0);
+        secondsByMode.put("kanji", 0);
+        secondsByMode.put("kanji-words", 0);
+        secondsByMode.put("conversation", 0);
+
+        int weekSeconds = 0;
+        int totalSeconds = 0;
+        for (Session session : sessions) {
+            secondsByDate.merge(session.date, session.durationSeconds, Integer::sum);
+            totalSeconds += session.durationSeconds;
+            LocalDate day = parseDate(session.date);
+            if (day != null && !day.isBefore(today.minusDays(6))) {
+                weekSeconds += session.durationSeconds;
+                secondsByMode.merge(session.mode, session.durationSeconds, Integer::sum);
+            }
+        }
+
+        List<DayStat> lastFourteenDays = new ArrayList<>();
+        for (int offset = 13; offset >= 0; offset--) {
+            LocalDate day = today.minusDays(offset);
+            String key = day.format(DATE);
+            lastFourteenDays.add(new DayStat(day, secondsByDate.getOrDefault(key, 0)));
+        }
+
+        List<Session> recent = new ArrayList<>(sessions);
+        Collections.reverse(recent);
+        if (recent.size() > 12) recent = new ArrayList<>(recent.subList(0, 12));
+
+        return new Snapshot(
+            getStreak(sessions),
+            secondsByDate.getOrDefault(today.format(DATE), 0),
+            weekSeconds,
+            totalSeconds,
+            countDueReviews(),
+            secondsByDate.containsKey(today.format(DATE)),
+            lastFourteenDays,
+            secondsByMode,
+            recent
+        );
+    }
+
+    public synchronized int getStreak() {
+        return getStreak(readSessions());
+    }
+
+    public synchronized boolean hasPracticedToday() {
+        String today = LocalDate.now().format(DATE);
+        for (Session session : readSessions()) {
+            if (today.equals(session.date)) return true;
+        }
+        return false;
+    }
+
+    private int getStreak(List<Session> sessions) {
+        Set<String> practicedDays = new HashSet<>();
+        for (Session session : sessions) practicedDays.add(session.date);
+        LocalDate today = LocalDate.now();
+        LocalDate cursor = practicedDays.contains(today.format(DATE))
+            ? today
+            : today.minusDays(1);
+        int streak = 0;
+        while (practicedDays.contains(cursor.format(DATE))) {
+            streak++;
+            cursor = cursor.minusDays(1);
+        }
+        return streak;
+    }
+
+    private int countDueReviews() {
+        String json = restoreProgress();
+        if (json.isEmpty()) return 0;
+        try {
+            JSONObject progress = new JSONObject(json);
+            long now = System.currentTimeMillis();
+            int due = 0;
+            String[] groups = {"kana", "words", "kanji", "kanjiWords", "conversations"};
+            for (String group : groups) {
+                JSONObject entries = progress.optJSONObject(group);
+                if (entries == null) continue;
+                JSONArray names = entries.names();
+                if (names == null) continue;
+                for (int i = 0; i < names.length(); i++) {
+                    JSONObject stat = entries.optJSONObject(names.optString(i));
+                    if (stat == null || stat.optInt("strength", 0) < 3) continue;
+                    long nextReview = stat.optLong("nextReviewAt", Long.MAX_VALUE);
+                    if (nextReview <= now) due++;
+                }
+            }
+            return due;
+        } catch (Exception ignored) {
+            return 0;
+        }
+    }
+
+    private JSONArray readSessionArray() {
+        try {
+            return new JSONArray(preferences.getString(SESSIONS, "[]"));
+        } catch (Exception ignored) {
+            return new JSONArray();
+        }
+    }
+
+    private List<Session> readSessions() {
+        List<Session> result = new ArrayList<>();
+        JSONArray array = readSessionArray();
+        for (int i = 0; i < array.length(); i++) {
+            JSONObject item = array.optJSONObject(i);
+            if (item == null) continue;
+            result.add(new Session(
+                item.optString("date", ""),
+                item.optLong("timestamp", 0L),
+                sanitizeMode(item.optString("mode", "kana")),
+                Math.max(1, item.optInt("durationSeconds", 1)),
+                Math.max(1, item.optInt("itemCount", 1))
+            ));
+        }
+        return result;
+    }
+
+    private String sanitizeMode(String mode) {
+        if (mode == null) return "kana";
+        switch (mode) {
+            case "words":
+            case "kanji":
+            case "kanji-words":
+            case "conversation":
+            case "kana":
+                return mode;
+            default:
+                return "kana";
+        }
+    }
+
+    private LocalDate parseDate(String value) {
+        try {
+            return LocalDate.parse(value, DATE);
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    public static String modeLabel(String mode) {
+        switch (mode) {
+            case "words": return "Kana-Wörter";
+            case "kanji": return "Kanji";
+            case "kanji-words": return "Kanji-Wörter";
+            case "conversation": return "Gespräche";
+            default: return "Kana lesen";
+        }
+    }
+
+    public static final class Session {
+        public final String date;
+        public final long timestamp;
+        public final String mode;
+        public final int durationSeconds;
+        public final int itemCount;
+
+        Session(String date, long timestamp, String mode, int durationSeconds, int itemCount) {
+            this.date = date;
+            this.timestamp = timestamp;
+            this.mode = mode;
+            this.durationSeconds = durationSeconds;
+            this.itemCount = itemCount;
+        }
+    }
+
+    public static final class DayStat {
+        public final LocalDate date;
+        public final int seconds;
+
+        DayStat(LocalDate date, int seconds) {
+            this.date = date;
+            this.seconds = seconds;
+        }
+    }
+
+    public static final class Snapshot {
+        public final int streak;
+        public final int todaySeconds;
+        public final int weekSeconds;
+        public final int totalSeconds;
+        public final int dueReviews;
+        public final boolean practicedToday;
+        public final List<DayStat> days;
+        public final Map<String, Integer> modeSeconds;
+        public final List<Session> recentSessions;
+
+        Snapshot(int streak, int todaySeconds, int weekSeconds, int totalSeconds,
+                 int dueReviews, boolean practicedToday, List<DayStat> days,
+                 Map<String, Integer> modeSeconds, List<Session> recentSessions) {
+            this.streak = streak;
+            this.todaySeconds = todaySeconds;
+            this.weekSeconds = weekSeconds;
+            this.totalSeconds = totalSeconds;
+            this.dueReviews = dueReviews;
+            this.practicedToday = practicedToday;
+            this.days = days;
+            this.modeSeconds = modeSeconds;
+            this.recentSessions = recentSessions;
+        }
+    }
+}

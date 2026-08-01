@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#f5f0e8">
+    <meta name="description" content="Hiragana, Katakana, Wörter, Kanji und japanische Gespräche mit Aussprache, Tonhöhenmustern und Wiederholung lernen.">
+    <title>Kana Garten – Manga-Japanisch lernen</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+    <script>
+      (() => {
+        try {
+          const savedTheme = localStorage.getItem("kana-garten-theme");
+          const theme = savedTheme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+          document.documentElement.dataset.theme = theme;
+          document.documentElement.style.colorScheme = theme;
+        } catch {
+          document.documentElement.dataset.theme = "light";
+        }
+      })();
+    </script>
+    <link rel="stylesheet" href="/styles.css?v=1.0.0">
+  </head>
+  <body>
+    <div class="paper-grain" aria-hidden="true"></div>
+
+    <header class="site-header">
+      <a class="brand" href="#" data-action="home" aria-label="Kana Garten Startseite">
+        <span class="brand-mark" aria-hidden="true">あ</span>
+        <span>
+          <strong>Kana Garten</strong>
+          <small>かな ガーデン</small>
+        </span>
+      </a>
+      <div class="header-actions">
+        <button class="theme-toggle" type="button" data-action="toggle-theme" aria-label="Dunkelmodus aktivieren" aria-pressed="false">
+          <span class="theme-toggle-icon" aria-hidden="true">☾</span>
+          <span class="theme-toggle-label">Dunkel</span>
+        </button>
+        <button class="text-button" type="button" data-action="show-guide">
+          <span aria-hidden="true">?</span> So funktioniert’s
+        </button>
+        <div class="save-indicator" title="Dein Fortschritt wird nur in diesem Browser gespeichert">
+          <span class="save-dot" aria-hidden="true"></span>
+          lokal gespeichert
+        </div>
+      </div>
+    </header>
+
+    <main id="app" tabindex="-1"></main>
+
+    <footer class="site-footer">
+      <p>一歩ずつ <span>·</span> Schritt für Schritt</p>
+      <button type="button" class="footer-link" data-action="reset-progress">Fortschritt zurücksetzen</button>
+    </footer>
+
+    <dialog class="app-dialog" id="guide-dialog">
+      <button class="dialog-close" type="button" data-close-dialog aria-label="Schließen">×</button>
+      <span class="eyebrow">In 3 Schritten</span>
+      <h2>So bleibt Japanisch wirklich hängen.</h2>
+      <ol class="guide-list">
+        <li><strong>Modus wählen</strong><span>Übe Kana, Wörter, Kanji oder echte Gespräche mit Aussprachetraining.</span></li>
+        <li><strong>Aktiv antworten</strong><span>Tippe die Lösung oder sprich selbst, bevor du Musterantwort und Erklärung öffnest.</span></li>
+        <li><strong>Lücken schließen</strong><span>Unsichere Inhalte kommen erneut. Sicheres Wissen kehrt in größeren Abständen zurück.</span></li>
+      </ol>
+      <button class="primary-button full-width" type="button" data-close-dialog>Verstanden</button>
+    </dialog>
+
+    <dialog class="app-dialog confirm-dialog" id="confirm-dialog">
+      <span class="eyebrow">Bist du sicher?</span>
+      <h2 id="confirm-title">Fortschritt zurücksetzen?</h2>
+      <p id="confirm-message">Deine bisherige Statistik wird unwiderruflich gelöscht.</p>
+      <div class="dialog-actions">
+        <button class="secondary-button" type="button" data-confirm="cancel">Abbrechen</button>
+        <button class="danger-button" type="button" data-confirm="accept">Zurücksetzen</button>
+      </div>
+    </dialog>
+
+    <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
+    <script type="module" src="/app.js?v=1.0.0"></script>
+  </body>
+</html>
