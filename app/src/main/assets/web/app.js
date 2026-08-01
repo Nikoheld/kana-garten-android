@@ -1945,7 +1945,10 @@ function renderWordQuiz() {
       </section>
     </div>
   `;
-  requestAnimationFrame(() => document.querySelector("#kana-answer")?.focus());
+  window.scrollTo({ top: 0, behavior: "instant" });
+  requestAnimationFrame(() =>
+    document.querySelector("#kana-answer")?.focus({ preventScroll: true }),
+  );
 }
 
 function submitWordAnswer(rawAnswer, revealed = false) {
@@ -3220,7 +3223,7 @@ function renderQuiz() {
 
   document.body.classList.add("is-quizzing");
   app.innerHTML = `
-    <div class="quiz-view">
+    <div class="quiz-view kana-quiz-view">
       <div class="quiz-top">
         <button class="icon-button" type="button" data-action="quit-session"><span aria-hidden="true">←</span> Beenden</button>
         <div class="progress-wrap" aria-label="${mastered} von ${total} gemeistert">
@@ -3234,7 +3237,7 @@ function renderQuiz() {
         </div>
       </div>
 
-      <section class="quiz-stage" aria-labelledby="quiz-prompt">
+      <section class="quiz-stage kana-quiz-stage" aria-labelledby="quiz-prompt">
         <p class="quiz-prompt" id="quiz-prompt">Wie liest man dieses Zeichen?</p>
         <div class="quiz-kana-wrap">
           <span class="quiz-script-tag">${kana.script}</span>
@@ -3284,7 +3287,10 @@ function renderQuiz() {
       </section>
     </div>
   `;
-  requestAnimationFrame(() => document.querySelector("#kana-answer")?.focus());
+  window.scrollTo({ top: 0, behavior: "instant" });
+  requestAnimationFrame(() =>
+    document.querySelector("#kana-answer")?.focus({ preventScroll: true }),
+  );
 }
 
 function submitAnswer(rawAnswer, revealed = false) {

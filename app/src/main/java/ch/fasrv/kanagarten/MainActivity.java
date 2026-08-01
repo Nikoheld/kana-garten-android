@@ -23,6 +23,7 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
+import android.view.WindowInsets;
 import android.webkit.JavascriptInterface;
 import android.webkit.PermissionRequest;
 import android.webkit.WebChromeClient;
@@ -73,9 +74,7 @@ public final class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         Window window = getWindow();
-        window.setStatusBarColor(PAPER);
-        window.setNavigationBarColor(PAPER_LIGHT);
-        window.getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);
+        configureSystemBars(window);
 
         usageStore = new UsageStore(this);
         initializeTextToSpeech();
@@ -88,6 +87,7 @@ public final class MainActivity extends Activity {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(PAPER);
+        installSystemBarInsets(root);
 
         contentFrame = new FrameLayout(this);
         root.addView(contentFrame, new LinearLayout.LayoutParams(
@@ -105,9 +105,52 @@ public final class MainActivity extends Activity {
 
         root.addView(buildBottomNavigation(), new LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
-            dp(76)
+            dp(72)
         ));
         setContentView(root);
+        root.requestApplyInsets();
+    }
+
+    @SuppressWarnings("deprecation")
+    private void configureSystemBars(Window window) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            window.setDecorFitsSystemWindows(false);
+            window.setStatusBarColor(Color.TRANSPARENT);
+            window.setNavigationBarColor(Color.TRANSPARENT);
+            android.view.WindowInsetsController controller =
+                window.getDecorView().getWindowInsetsController();
+            if (controller != null) {
+                controller.setSystemBarsAppearance(
+                    android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS
+                        | android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS,
+                    android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS
+                        | android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
+                );
+            }
+        } else {
+            window.setStatusBarColor(PAPER);
+            window.setNavigationBarColor(PAPER_LIGHT);
+            int flags = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
+                | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
+            window.getDecorView().setSystemUiVisibility(flags);
+        }
+    }
+
+    private void installSystemBarInsets(View root) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return;
+        root.setOnApplyWindowInsetsListener((view, windowInsets) -> {
+            android.graphics.Insets safeArea = windowInsets.getInsets(
+                WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout()
+            );
+            android.graphics.Insets keyboard = windowInsets.getInsets(WindowInsets.Type.ime());
+            view.setPadding(
+                safeArea.left,
+                safeArea.top,
+                safeArea.right,
+                Math.max(safeArea.bottom, keyboard.bottom)
+            );
+            return windowInsets;
+        });
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -173,27 +216,43 @@ public final class MainActivity extends Activity {
     }
 
     private View buildBottomNavigation() {
-        LinearLayout shell = new LinearLayout(this);
-        shell.setGravity(Gravity.CENTER);
-        shell.setPadding(dp(12), dp(7), dp(12), dp(7));
-        shell.setBackgroundColor(PAPER_LIGHT);
-        shell.setElevation(dp(14));
-        shell.addView(navigationButton("あ", "Lernen", 0), weighted());
-        shell.addView(navigationButton("▥", "Aktivität", 1), weighted());
-        shell.addView(navigationButton("•••", "Mehr", 2), weighted());
-        return shell;
+        FrameLayout area = new FrameLayout(this);
+        area.setPadding(dp(12), dp(5), dp(12), dp(7));
+        area.setBackgroundColor(PAPER);
+
+        LinearLayout dock = new LinearLayout(this);
+        dock.setGravity(Gravity.CENTER);
+        dock.setPadding(dp(5), dp(5), dp(5), dp(5));
+        GradientDrawable dockBackground = rounded(PAPER_LIGHT, 22);
+        dockBackground.setStroke(dp(1), 0xFFD8D2C8);
+        dock.setBackground(dockBackground);
+        dock.setElevation(dp(12));
+        dock.addView(navigationButton("あ", "Lernen", 0), weighted());
+        dock.addView(navigationButton("▥", "Aktivität", 1), weighted());
+        dock.addView(navigationButton("⚙", "Mehr", 2), weighted());
+        area.addView(dock, new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT
+        ));
+        return area;
     }
 
     @SuppressLint("SetTextI18n")
     private TextView navigationButton(String icon, String label, int index) {
         TextView button = new TextView(this);
-        button.setText(icon + "\n" + label);
-        button.setTextSize(11);
+        button.setText(icon + "  " + label);
+        button.setTextSize(12);
         button.setTypeface(Typeface.create("sans", Typeface.BOLD));
         button.setGravity(Gravity.CENTER);
-        button.setLineSpacing(0, 0.92f);
+        button.setLetterSpacing(0.015f);
+        button.setPadding(dp(4), 0, dp(4), 0);
         button.setContentDescription(label);
-        button.setOnClickListener(view -> selectTab(index, true));
+        button.setOnClickListener(view -> {
+            view.animate().scaleX(0.96f).scaleY(0.96f).setDuration(70).withEndAction(() ->
+                view.animate().scaleX(1f).scaleY(1f).setDuration(140).start()
+            ).start();
+            selectTab(index, true);
+        });
         navigationButtons.add(button);
         return button;
     }
@@ -205,7 +264,9 @@ public final class MainActivity extends Activity {
             TextView button = navigationButtons.get(i);
             boolean selected = i == index;
             button.setTextColor(selected ? Color.WHITE : MUTED);
-            button.setBackground(selected ? rounded(INK, 13) : rounded(Color.TRANSPARENT, 13));
+            button.setBackground(selected ? rounded(INK, 17) : rounded(Color.TRANSPARENT, 17));
+            button.setAlpha(selected ? 1f : 0.86f);
+            button.setSelected(selected);
         }
         if (currentView == next) return;
         if (!animate || currentView == null) {
@@ -279,7 +340,7 @@ public final class MainActivity extends Activity {
 
         LinearLayout source = settingCard();
         source.addView(label("Open Source", 17, INK, Typeface.BOLD));
-        source.addView(label("Quellcode, Release-APK und Build-Workflow liegen im GitHub-Repository.", 12, MUTED, Typeface.NORMAL), margins(0, 7, 0, 13));
+        source.addView(label("Quellcode, Release-APK und Prüfsumme liegen im GitHub-Repository.", 12, MUTED, Typeface.NORMAL), margins(0, 7, 0, 13));
         Button sourceButton = actionButton("GitHub-Repository öffnen", GREEN);
         sourceButton.setOnClickListener(view -> startActivity(new Intent(
             Intent.ACTION_VIEW,
