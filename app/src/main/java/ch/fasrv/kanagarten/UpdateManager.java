@@ -97,7 +97,12 @@ public final class UpdateManager {
             ? "Eine neue Version mit Verbesserungen ist verfügbar."
             : notes.trim();
         if (cleanNotes.length() > 700) cleanNotes = cleanNotes.substring(0, 700) + "…";
-        new AlertDialog.Builder(activity)
+        new AlertDialog.Builder(
+            activity,
+            AppPalette.isDark(activity)
+                ? AlertDialog.THEME_DEVICE_DEFAULT_DARK
+                : AlertDialog.THEME_DEVICE_DEFAULT_LIGHT
+        )
             .setTitle("Kana Garten " + version)
             .setMessage(cleanNotes + "\n\nDas Update wird direkt aus dem offiziellen GitHub-Release geladen.")
             .setNegativeButton("Später", null)
@@ -159,7 +164,12 @@ public final class UpdateManager {
 
         if (!activity.getPackageManager().canRequestPackageInstalls()) {
             if (!explainPermission) return;
-            new AlertDialog.Builder(activity)
+            new AlertDialog.Builder(
+                activity,
+                AppPalette.isDark(activity)
+                    ? AlertDialog.THEME_DEVICE_DEFAULT_DARK
+                    : AlertDialog.THEME_DEVICE_DEFAULT_LIGHT
+            )
                 .setTitle("Update installieren")
                 .setMessage("Android benötigt einmalig die Erlaubnis, Updates aus Kana Garten zu installieren. Die APK stammt direkt aus dem GitHub-Repository der App.")
                 .setNegativeButton("Später", null)
