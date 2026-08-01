@@ -27,9 +27,21 @@ import java.util.concurrent.Executors;
 public final class UpdateManager {
     private static final String PREFS = "kana_garten_updates";
     private static final String DOWNLOAD_ID = "download_id";
+    private static final String DOWNLOAD_VERSION = "download_version";
+    private static final String INSTALL_LAUNCHED_ID = "install_launched_id";
+    private static final String INSTALLED_VERSION = "installed_version";
     private static final ExecutorService EXECUTOR = Executors.newSingleThreadExecutor();
 
     private UpdateManager() {}
+
+    public static void initialize(Context context) {
+        SharedPreferences preferences = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        String previouslyInstalled = preferences.getString(INSTALLED_VERSION, "");
+        if (!BuildConfig.VERSION_NAME.equals(previouslyInstalled)) {
+            clearPending(context, true);
+            preferences.edit().putString(INSTALLED_VERSION, BuildConfig.VERSION_NAME).apply();
+        }
+    }
 
     public static void checkForUpdates(Activity activity, boolean userInitiated) {
         if (userInitiated) Toast.makeText(activity, "Suche nach Updates …", Toast.LENGTH_SHORT).show();
@@ -105,7 +117,11 @@ public final class UpdateManager {
                 .setDestinationInExternalFilesDir(activity, Environment.DIRECTORY_DOWNLOADS, "kana-garten-" + version + ".apk");
             long id = manager.enqueue(request);
             activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .edit().putLong(DOWNLOAD_ID, id).apply();
+                .edit()
+                .putLong(DOWNLOAD_ID, id)
+                .putString(DOWNLOAD_VERSION, version)
+                .remove(INSTALL_LAUNCHED_ID)
+                .apply();
             Toast.makeText(activity, "Update wird heruntergeladen.", Toast.LENGTH_LONG).show();
         } catch (Exception error) {
             Toast.makeText(activity, "Download konnte nicht gestartet werden.", Toast.LENGTH_LONG).show();
@@ -117,12 +133,27 @@ public final class UpdateManager {
     }
 
     public static void tryInstallPending(Activity activity, boolean explainPermission) {
-        long id = getPendingDownloadId(activity);
+        SharedPreferences preferences = activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        long id = preferences.getLong(DOWNLOAD_ID, -1L);
         if (id < 0) return;
+        String targetVersion = preferences.getString(DOWNLOAD_VERSION, "");
+        if (!targetVersion.isEmpty() && compareVersions(targetVersion, BuildConfig.VERSION_NAME) <= 0) {
+            clearPending(activity, true);
+            return;
+        }
+        if (preferences.getLong(INSTALL_LAUNCHED_ID, -1L) == id) return;
+
         DownloadManager manager = (DownloadManager) activity.getSystemService(Context.DOWNLOAD_SERVICE);
         try (Cursor cursor = manager.query(new DownloadManager.Query().setFilterById(id))) {
-            if (!cursor.moveToFirst()) return;
+            if (!cursor.moveToFirst()) {
+                clearPending(activity, false);
+                return;
+            }
             int status = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS));
+            if (status == DownloadManager.STATUS_FAILED) {
+                clearPending(activity, true);
+                return;
+            }
             if (status != DownloadManager.STATUS_SUCCESSFUL) return;
         }
 
@@ -148,7 +179,27 @@ public final class UpdateManager {
         Intent install = new Intent(Intent.ACTION_VIEW)
             .setDataAndType(apk, "application/vnd.android.package-archive")
             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-        activity.startActivity(install);
+        preferences.edit().putLong(INSTALL_LAUNCHED_ID, id).apply();
+        try {
+            activity.startActivity(install);
+        } catch (Exception error) {
+            preferences.edit().remove(INSTALL_LAUNCHED_ID).apply();
+            Toast.makeText(activity, "Android konnte den Paketinstaller nicht öffnen.", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private static void clearPending(Context context, boolean removeDownload) {
+        SharedPreferences preferences = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        long id = preferences.getLong(DOWNLOAD_ID, -1L);
+        if (removeDownload && id >= 0) {
+            DownloadManager manager = (DownloadManager) context.getSystemService(Context.DOWNLOAD_SERVICE);
+            if (manager != null) manager.remove(id);
+        }
+        preferences.edit()
+            .remove(DOWNLOAD_ID)
+            .remove(DOWNLOAD_VERSION)
+            .remove(INSTALL_LAUNCHED_ID)
+            .apply();
     }
 
     private static int compareVersions(String left, String right) {

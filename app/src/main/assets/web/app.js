@@ -521,6 +521,18 @@ function notifyAndroidSession(kind, durationSeconds, itemCount) {
   window.Android?.recordSession?.(kind, durationSeconds, itemCount);
 }
 
+function notifyAndroidLearningState() {
+  window.Android?.setLearningActive?.(
+    document.body.classList.contains("is-quizzing"),
+  );
+}
+
+new MutationObserver(notifyAndroidLearningState).observe(document.body, {
+  attributes: true,
+  attributeFilter: ["class"],
+});
+notifyAndroidLearningState();
+
 function normalizeRomaji(value) {
   return value.trim().toLowerCase().replaceAll("’", "'").replace(/\s+/g, "");
 }

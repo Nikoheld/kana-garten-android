@@ -52,6 +52,7 @@ public final class MainActivity extends Activity {
 
     private final List<TextView> navigationButtons = new ArrayList<>();
     private FrameLayout contentFrame;
+    private View bottomNavigation;
     private WebView webView;
     private DashboardView dashboardView;
     private View settingsView;
@@ -59,6 +60,7 @@ public final class MainActivity extends Activity {
     private UsageStore usageStore;
     private TextToSpeech textToSpeech;
     private PermissionRequest pendingAudioPermission;
+    private boolean learningActive;
 
     private final BroadcastReceiver downloadReceiver = new BroadcastReceiver() {
         @Override
@@ -75,6 +77,7 @@ public final class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
         Window window = getWindow();
         configureSystemBars(window);
+        UpdateManager.initialize(this);
 
         usageStore = new UsageStore(this);
         initializeTextToSpeech();
@@ -103,7 +106,8 @@ public final class MainActivity extends Activity {
         contentFrame.addView(dashboardView, matchParent());
         contentFrame.addView(settingsView, matchParent());
 
-        root.addView(buildBottomNavigation(), new LinearLayout.LayoutParams(
+        bottomNavigation = buildBottomNavigation();
+        root.addView(bottomNavigation, new LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             dp(72)
         ));
@@ -287,6 +291,31 @@ public final class MainActivity extends Activity {
         }).start();
         next.animate().alpha(1f).translationY(0f).setDuration(240).start();
         currentView = next;
+    }
+
+    private void setLearningActive(boolean active) {
+        if (bottomNavigation == null || learningActive == active) return;
+        learningActive = active;
+        bottomNavigation.animate().cancel();
+        if (active) {
+            bottomNavigation.animate()
+                .alpha(0f)
+                .translationY(dp(18))
+                .setDuration(150)
+                .withEndAction(() -> {
+                    if (learningActive) bottomNavigation.setVisibility(View.GONE);
+                })
+                .start();
+        } else {
+            bottomNavigation.setVisibility(View.VISIBLE);
+            bottomNavigation.setAlpha(0f);
+            bottomNavigation.setTranslationY(dp(18));
+            bottomNavigation.animate()
+                .alpha(1f)
+                .translationY(0f)
+                .setDuration(210)
+                .start();
+        }
     }
 
     private View buildSettingsView() {
@@ -530,6 +559,11 @@ public final class MainActivity extends Activity {
         @JavascriptInterface
         public void speakJapanese(String text, double rate) {
             MainActivity.this.speakJapanese(text, rate);
+        }
+
+        @JavascriptInterface
+        public void setLearningActive(boolean active) {
+            runOnUiThread(() -> MainActivity.this.setLearningActive(active));
         }
     }
 }
