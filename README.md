@@ -22,7 +22,7 @@ Eine vollständige, offlinefähige Android-App zum Lesen, Verstehen und Sprechen
 - lokales Usage-Dashboard mit Lernzeit pro Tag, Bereich, Woche, Streak, fälligen Reviews und letzten Einheiten
 - Hibi-Widget mit vier Emotionen, die sich bis zum drohenden Streak-Verlust steigern
 - Auto-Updater über signierte APKs aus GitHub Releases
-- Hell-/Dunkelmodus und responsive, animierte Oberfläche
+- App-weiter Hell-/Dunkelmodus inklusive Systemleisten, Dashboard, Einstellungen, Dialogen und Widget
 
 ## Datenschutz und Offline-Verhalten
 

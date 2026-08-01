@@ -461,6 +461,10 @@ function applyTheme(theme, persist = false) {
       // Die Darstellung funktioniert auch, wenn der Browser Speicher blockiert.
     }
   }
+  window.Android?.setDarkMode?.(
+    nextTheme === "dark",
+    persist || Boolean(getSavedTheme()),
+  );
 }
 
 applyTheme(document.documentElement.dataset.theme || "light");

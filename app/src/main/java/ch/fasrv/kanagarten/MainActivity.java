@@ -14,6 +14,7 @@ import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.Typeface;
+import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Bundle;
@@ -43,14 +44,10 @@ import java.util.Locale;
 
 public final class MainActivity extends Activity {
     private static final int REQUEST_AUDIO = 801;
-    private static final int PAPER = 0xFFF5F0E8;
-    private static final int PAPER_LIGHT = 0xFFFFFAF2;
-    private static final int INK = 0xFF17201C;
-    private static final int MUTED = 0xFF69716C;
-    private static final int RED = 0xFFD94A36;
-    private static final int GREEN = 0xFF1D7455;
 
     private final List<TextView> navigationButtons = new ArrayList<>();
+    private AppPalette palette;
+    private LinearLayout rootView;
     private FrameLayout contentFrame;
     private View bottomNavigation;
     private WebView webView;
@@ -61,6 +58,7 @@ public final class MainActivity extends Activity {
     private TextToSpeech textToSpeech;
     private PermissionRequest pendingAudioPermission;
     private boolean learningActive;
+    private int selectedTab;
 
     private final BroadcastReceiver downloadReceiver = new BroadcastReceiver() {
         @Override
@@ -75,6 +73,7 @@ public final class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        palette = new AppPalette(AppPalette.isDark(this));
         Window window = getWindow();
         configureSystemBars(window);
         UpdateManager.initialize(this);
@@ -87,56 +86,58 @@ public final class MainActivity extends Activity {
     }
 
     private void buildInterface() {
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(PAPER);
-        installSystemBarInsets(root);
+        rootView = new LinearLayout(this);
+        rootView.setOrientation(LinearLayout.VERTICAL);
+        rootView.setBackgroundColor(palette.paper);
+        installSystemBarInsets(rootView);
 
         contentFrame = new FrameLayout(this);
-        root.addView(contentFrame, new LinearLayout.LayoutParams(
+        rootView.addView(contentFrame, new LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             0,
             1f
         ));
 
         webView = buildWebView();
-        dashboardView = new DashboardView(this, usageStore);
+        dashboardView = new DashboardView(this, usageStore, palette.dark);
         settingsView = buildSettingsView();
         contentFrame.addView(webView, matchParent());
         contentFrame.addView(dashboardView, matchParent());
         contentFrame.addView(settingsView, matchParent());
 
         bottomNavigation = buildBottomNavigation();
-        root.addView(bottomNavigation, new LinearLayout.LayoutParams(
+        rootView.addView(bottomNavigation, new LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             dp(72)
         ));
-        setContentView(root);
-        root.requestApplyInsets();
+        setContentView(rootView);
+        rootView.requestApplyInsets();
     }
 
     @SuppressWarnings("deprecation")
     private void configureSystemBars(Window window) {
+        window.setBackgroundDrawable(new ColorDrawable(palette.paper));
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             window.setDecorFitsSystemWindows(false);
             window.setStatusBarColor(Color.TRANSPARENT);
             window.setNavigationBarColor(Color.TRANSPARENT);
+            window.setNavigationBarContrastEnforced(false);
             android.view.WindowInsetsController controller =
                 window.getDecorView().getWindowInsetsController();
             if (controller != null) {
+                int mask = android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS
+                    | android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS;
                 controller.setSystemBarsAppearance(
-                    android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS
-                        | android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS,
-                    android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS
-                        | android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
+                    palette.dark ? 0 : mask,
+                    mask
                 );
             }
         } else {
-            window.setStatusBarColor(PAPER);
-            window.setNavigationBarColor(PAPER_LIGHT);
+            window.setStatusBarColor(palette.paper);
+            window.setNavigationBarColor(palette.paperLight);
             int flags = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
                 | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
-            window.getDecorView().setSystemUiVisibility(flags);
+            window.getDecorView().setSystemUiVisibility(palette.dark ? 0 : flags);
         }
     }
 
@@ -161,7 +162,7 @@ public final class MainActivity extends Activity {
     private WebView buildWebView() {
         if (BuildConfig.DEBUG) WebView.setWebContentsDebuggingEnabled(true);
         WebView view = new WebView(this);
-        view.setBackgroundColor(PAPER);
+        view.setBackgroundColor(palette.paper);
         view.setOverScrollMode(View.OVER_SCROLL_NEVER);
         WebSettings settings = view.getSettings();
         settings.setJavaScriptEnabled(true);
@@ -222,13 +223,13 @@ public final class MainActivity extends Activity {
     private View buildBottomNavigation() {
         FrameLayout area = new FrameLayout(this);
         area.setPadding(dp(12), dp(5), dp(12), dp(7));
-        area.setBackgroundColor(PAPER);
+        area.setBackgroundColor(palette.paper);
 
         LinearLayout dock = new LinearLayout(this);
         dock.setGravity(Gravity.CENTER);
         dock.setPadding(dp(5), dp(5), dp(5), dp(5));
-        GradientDrawable dockBackground = rounded(PAPER_LIGHT, 22);
-        dockBackground.setStroke(dp(1), 0xFFD8D2C8);
+        GradientDrawable dockBackground = rounded(palette.paperLight, 22);
+        dockBackground.setStroke(dp(1), palette.line);
         dock.setBackground(dockBackground);
         dock.setElevation(dp(12));
         dock.addView(navigationButton("あ", "Lernen", 0), weighted());
@@ -262,16 +263,10 @@ public final class MainActivity extends Activity {
     }
 
     private void selectTab(int index, boolean animate) {
+        selectedTab = index;
         View next = index == 0 ? webView : index == 1 ? dashboardView : settingsView;
         if (index == 1) dashboardView.refresh();
-        for (int i = 0; i < navigationButtons.size(); i++) {
-            TextView button = navigationButtons.get(i);
-            boolean selected = i == index;
-            button.setTextColor(selected ? Color.WHITE : MUTED);
-            button.setBackground(selected ? rounded(INK, 17) : rounded(Color.TRANSPARENT, 17));
-            button.setAlpha(selected ? 1f : 0.86f);
-            button.setSelected(selected);
-        }
+        updateNavigationAppearance();
         if (currentView == next) return;
         if (!animate || currentView == null) {
             webView.setVisibility(next == webView ? View.VISIBLE : View.GONE);
@@ -291,6 +286,21 @@ public final class MainActivity extends Activity {
         }).start();
         next.animate().alpha(1f).translationY(0f).setDuration(240).start();
         currentView = next;
+    }
+
+    private void updateNavigationAppearance() {
+        for (int i = 0; i < navigationButtons.size(); i++) {
+            TextView button = navigationButtons.get(i);
+            boolean selected = i == selectedTab;
+            button.setTextColor(selected
+                ? (palette.dark ? palette.paper : Color.WHITE)
+                : palette.muted);
+            button.setBackground(selected
+                ? rounded(palette.ink, 17)
+                : rounded(Color.TRANSPARENT, 17));
+            button.setAlpha(selected ? 1f : 0.86f);
+            button.setSelected(selected);
+        }
     }
 
     private void setLearningActive(boolean active) {
@@ -318,32 +328,61 @@ public final class MainActivity extends Activity {
         }
     }
 
+    private void applyDarkMode(boolean darkMode, boolean persist) {
+        if (persist) AppPalette.save(this, darkMode);
+        if (palette.dark == darkMode) return;
+        palette = new AppPalette(darkMode);
+        configureSystemBars(getWindow());
+
+        rootView.setBackgroundColor(palette.paper);
+        webView.setBackgroundColor(palette.paper);
+        dashboardView.setDarkMode(darkMode);
+
+        boolean settingsVisible = selectedTab == 2;
+        contentFrame.removeView(settingsView);
+        settingsView = buildSettingsView();
+        settingsView.setVisibility(settingsVisible ? View.VISIBLE : View.GONE);
+        contentFrame.addView(settingsView, matchParent());
+        if (settingsVisible) currentView = settingsView;
+
+        rootView.removeView(bottomNavigation);
+        navigationButtons.clear();
+        bottomNavigation = buildBottomNavigation();
+        if (learningActive) bottomNavigation.setVisibility(View.GONE);
+        rootView.addView(bottomNavigation, new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            dp(72)
+        ));
+        updateNavigationAppearance();
+        StreakWidgetProvider.updateAll(this);
+    }
+
     private View buildSettingsView() {
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
-        scroll.setBackgroundColor(PAPER);
+        scroll.setBackgroundColor(palette.paper);
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
         content.setPadding(dp(20), dp(28), dp(20), dp(110));
         scroll.addView(content);
 
-        TextView eyebrow = label("APP & OFFLINE", 10, RED, Typeface.BOLD);
+        TextView eyebrow = label("APP & OFFLINE", 10, palette.red, Typeface.BOLD);
         eyebrow.setLetterSpacing(0.14f);
         content.addView(eyebrow);
-        content.addView(label("Mehr Kontrolle.", 34, INK, Typeface.BOLD), margins(0, 8, 0, 8));
-        TextView intro = label("Updates, Offline-Paket und dein Streak-Widget an einem Ort.", 13, MUTED, Typeface.NORMAL);
+        content.addView(label("Mehr Kontrolle.", 34, palette.ink, Typeface.BOLD), margins(0, 8, 0, 8));
+        TextView intro = label("Updates, Offline-Paket und dein Streak-Widget an einem Ort.", 13, palette.muted, Typeface.NORMAL);
         intro.setLineSpacing(0, 1.3f);
         content.addView(intro, margins(0, 0, 0, 24));
 
         LinearLayout offline = settingCard();
-        offline.addView(label("✓  Vollständig offline", 17, GREEN, Typeface.BOLD));
-        offline.addView(label("Alle Kana, Wörter, Kanji, Gespräche, Eselsbrücken, Statistiken und Noto Sans JP sind im APK gespeichert. Nur die optionale Update-Prüfung benötigt Internet.", 12, MUTED, Typeface.NORMAL), margins(0, 8, 0, 0));
+        offline.addView(label("✓  Vollständig offline", 17, palette.green, Typeface.BOLD));
+        offline.addView(label("Alle Kana, Wörter, Kanji, Gespräche, Eselsbrücken, Statistiken und Noto Sans JP sind im APK gespeichert. Nur die optionale Update-Prüfung benötigt Internet.", 12, palette.muted, Typeface.NORMAL), margins(0, 8, 0, 0));
         content.addView(offline, margins(0, 0, 0, 12));
 
         LinearLayout update = settingCard();
-        update.addView(label("App-Updates", 17, INK, Typeface.BOLD));
-        update.addView(label("Installiert: Version " + BuildConfig.VERSION_NAME + "\nQuelle: GitHub Releases", 12, MUTED, Typeface.NORMAL), margins(0, 7, 0, 13));
-        Button updateButton = actionButton("Jetzt nach Updates suchen", RED);
+        update.addView(label("App-Updates", 17, palette.ink, Typeface.BOLD));
+        update.addView(label("Installiert: Version " + BuildConfig.VERSION_NAME + "\nQuelle: GitHub Releases", 12, palette.muted, Typeface.NORMAL), margins(0, 7, 0, 13));
+        Button updateButton = actionButton("Jetzt nach Updates suchen", palette.red);
         updateButton.setOnClickListener(view -> UpdateManager.checkForUpdates(this, true));
         update.addView(updateButton);
         content.addView(update, margins(0, 0, 0, 12));
@@ -358,19 +397,19 @@ public final class MainActivity extends Activity {
         LinearLayout widgetCopy = new LinearLayout(this);
         widgetCopy.setOrientation(LinearLayout.VERTICAL);
         widgetCopy.setPadding(dp(12), 0, 0, 0);
-        widgetCopy.addView(label("Hibi-Streak-Widget", 17, INK, Typeface.BOLD));
-        widgetCopy.addView(label("Hibi wird immer wütender, je näher Mitternacht kommt.", 11, MUTED, Typeface.NORMAL));
+        widgetCopy.addView(label("Hibi-Streak-Widget", 17, palette.ink, Typeface.BOLD));
+        widgetCopy.addView(label("Hibi wird immer wütender, je näher Mitternacht kommt.", 11, palette.muted, Typeface.NORMAL));
         widgetHeader.addView(widgetCopy, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         widget.addView(widgetHeader);
-        Button widgetButton = actionButton("Widget zum Startbildschirm", INK);
+        Button widgetButton = actionButton("Widget zum Startbildschirm", palette.ink);
         widgetButton.setOnClickListener(view -> requestWidgetPin());
         widget.addView(widgetButton, margins(0, 10, 0, 0));
         content.addView(widget, margins(0, 0, 0, 12));
 
         LinearLayout source = settingCard();
-        source.addView(label("Open Source", 17, INK, Typeface.BOLD));
-        source.addView(label("Quellcode, Release-APK und Prüfsumme liegen im GitHub-Repository.", 12, MUTED, Typeface.NORMAL), margins(0, 7, 0, 13));
-        Button sourceButton = actionButton("GitHub-Repository öffnen", GREEN);
+        source.addView(label("Open Source", 17, palette.ink, Typeface.BOLD));
+        source.addView(label("Quellcode, Release-APK und Prüfsumme liegen im GitHub-Repository.", 12, palette.muted, Typeface.NORMAL), margins(0, 7, 0, 13));
+        Button sourceButton = actionButton("GitHub-Repository öffnen", palette.green);
         sourceButton.setOnClickListener(view -> startActivity(new Intent(
             Intent.ACTION_VIEW,
             Uri.parse("https://github.com/" + BuildConfig.UPDATE_REPOSITORY)
@@ -383,7 +422,10 @@ public final class MainActivity extends Activity {
     private void requestWidgetPin() {
         AppWidgetManager manager = getSystemService(AppWidgetManager.class);
         if (manager == null || !manager.isRequestPinAppWidgetSupported()) {
-            new AlertDialog.Builder(this)
+            new AlertDialog.Builder(
+                this,
+                palette.dark ? AlertDialog.THEME_DEVICE_DEFAULT_DARK : AlertDialog.THEME_DEVICE_DEFAULT_LIGHT
+            )
                 .setTitle("Widget hinzufügen")
                 .setMessage("Halte den Startbildschirm gedrückt, öffne „Widgets“ und wähle „Kana Garten“.")
                 .setPositiveButton("Verstanden", null)
@@ -404,8 +446,8 @@ public final class MainActivity extends Activity {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
         card.setPadding(dp(17), dp(17), dp(17), dp(17));
-        GradientDrawable background = rounded(PAPER_LIGHT, 18);
-        background.setStroke(dp(1), 0xFFD8D2C8);
+        GradientDrawable background = rounded(palette.paperLight, 18);
+        background.setStroke(dp(1), palette.line);
         card.setBackground(background);
         return card;
     }
@@ -413,7 +455,7 @@ public final class MainActivity extends Activity {
     private Button actionButton(String text, int color) {
         Button button = new Button(this);
         button.setText(text);
-        button.setTextColor(Color.WHITE);
+        button.setTextColor(palette.dark ? palette.paper : Color.WHITE);
         button.setTextSize(12);
         button.setAllCaps(false);
         button.setTypeface(Typeface.DEFAULT_BOLD);
@@ -564,6 +606,11 @@ public final class MainActivity extends Activity {
         @JavascriptInterface
         public void setLearningActive(boolean active) {
             runOnUiThread(() -> MainActivity.this.setLearningActive(active));
+        }
+
+        @JavascriptInterface
+        public void setDarkMode(boolean darkMode, boolean persist) {
+            runOnUiThread(() -> MainActivity.this.applyDarkMode(darkMode, persist));
         }
     }
 }

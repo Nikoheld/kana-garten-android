@@ -21,31 +21,36 @@ import java.util.List;
 import java.util.Map;
 
 public final class DashboardView extends ScrollView {
-    private static final int PAPER = 0xFFF5F0E8;
-    private static final int PAPER_LIGHT = 0xFFFFFAF2;
-    private static final int INK = 0xFF17201C;
-    private static final int MUTED = 0xFF69716C;
-    private static final int RED = 0xFFD94A36;
-    private static final int GREEN = 0xFF1D7455;
-    private static final int LINE = 0xFFD8D2C8;
-
     private final UsageStore store;
     private final LinearLayout content;
+    private AppPalette palette;
 
     public DashboardView(Context context) {
         this(context, new UsageStore(context));
     }
 
     public DashboardView(Context context, UsageStore store) {
+        this(context, store, AppPalette.isDark(context));
+    }
+
+    public DashboardView(Context context, UsageStore store, boolean darkMode) {
         super(context);
         this.store = store;
+        palette = new AppPalette(darkMode);
         setFillViewport(true);
-        setBackgroundColor(PAPER);
+        setBackgroundColor(palette.paper);
         setClipToPadding(false);
         content = new LinearLayout(context);
         content.setOrientation(LinearLayout.VERTICAL);
         content.setPadding(dp(18), dp(24), dp(18), dp(110));
         addView(content, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT));
+        refresh();
+    }
+
+    public void setDarkMode(boolean darkMode) {
+        if (palette.dark == darkMode) return;
+        palette = new AppPalette(darkMode);
+        setBackgroundColor(palette.paper);
         refresh();
     }
 
@@ -69,7 +74,7 @@ public final class DashboardView extends ScrollView {
         LinearLayout hero = new LinearLayout(getContext());
         hero.setGravity(Gravity.CENTER_VERTICAL);
         hero.setPadding(dp(16), dp(12), dp(18), dp(12));
-        hero.setBackground(rounded(PAPER_LIGHT, 1, INK, 22));
+        hero.setBackground(rounded(palette.paperLight, 1, palette.ink, 22));
 
         ImageView mascot = new ImageView(getContext());
         mascot.setScaleType(ImageView.ScaleType.CENTER_CROP);
@@ -85,16 +90,16 @@ public final class DashboardView extends ScrollView {
         LinearLayout copy = new LinearLayout(getContext());
         copy.setOrientation(LinearLayout.VERTICAL);
         copy.setPadding(dp(13), 0, 0, 0);
-        TextView label = text("AKTUELLER STREAK", 10, MUTED, Typeface.BOLD);
+        TextView label = text("AKTUELLER STREAK", 10, palette.muted, Typeface.BOLD);
         label.setLetterSpacing(0.12f);
         copy.addView(label);
-        copy.addView(text(snapshot.streak + (snapshot.streak == 1 ? " Tag" : " Tage"), 31, INK, Typeface.BOLD));
+        copy.addView(text(snapshot.streak + (snapshot.streak == 1 ? " Tag" : " Tage"), 31, palette.ink, Typeface.BOLD));
         String message = snapshot.practicedToday
             ? "Heute erledigt. Hibi kann entspannen."
             : snapshot.streak > 0
                 ? "Eine kurze Runde schützt deine Serie."
                 : "Heute ist der perfekte erste Tag.";
-        TextView description = text(message, 12, snapshot.practicedToday ? GREEN : RED, Typeface.BOLD);
+        TextView description = text(message, 12, snapshot.practicedToday ? palette.green : palette.red, Typeface.BOLD);
         description.setPadding(0, dp(4), 0, 0);
         copy.addView(description);
         hero.addView(copy, new LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f));
@@ -115,9 +120,9 @@ public final class DashboardView extends ScrollView {
         card.setOrientation(LinearLayout.VERTICAL);
         card.setGravity(Gravity.CENTER_VERTICAL);
         card.setPadding(dp(12), dp(10), dp(9), dp(10));
-        card.setBackground(rounded(PAPER_LIGHT, 1, LINE, 16));
-        card.addView(text(value, 23, INK, Typeface.BOLD));
-        TextView caption = text(label, 9, MUTED, Typeface.BOLD);
+        card.setBackground(rounded(palette.paperLight, 1, palette.line, 16));
+        card.addView(text(value, 23, palette.ink, Typeface.BOLD));
+        TextView caption = text(label, 9, palette.muted, Typeface.BOLD);
         caption.setPadding(0, dp(5), 0, 0);
         card.addView(caption);
         return card;
@@ -129,15 +134,15 @@ public final class DashboardView extends ScrollView {
         for (Map.Entry<String, Integer> entry : modeSeconds.entrySet()) {
             LinearLayout labelRow = new LinearLayout(getContext());
             labelRow.setGravity(Gravity.CENTER_VERTICAL);
-            TextView name = text(UsageStore.modeLabel(entry.getKey()), 12, INK, Typeface.BOLD);
-            TextView time = text(formatTime(entry.getValue()), 11, MUTED, Typeface.BOLD);
+            TextView name = text(UsageStore.modeLabel(entry.getKey()), 12, palette.ink, Typeface.BOLD);
+            TextView time = text(formatTime(entry.getValue()), 11, palette.muted, Typeface.BOLD);
             time.setGravity(Gravity.END);
             labelRow.addView(name, new LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f));
             labelRow.addView(time);
             card.addView(labelRow);
 
             LinearLayout track = new LinearLayout(getContext());
-            track.setBackground(rounded(0xFFE6E1D8, 0, 0, 99));
+            track.setBackground(rounded(palette.track, 0, 0, 99));
             View fill = new View(getContext());
             fill.setBackground(rounded(colorForMode(entry.getKey()), 0, 0, 99));
             float ratio = totalSeconds == 0 ? 0f : Math.max(0.03f, entry.getValue() / (float) totalSeconds);
@@ -152,7 +157,7 @@ public final class DashboardView extends ScrollView {
         addSectionTitle("Letzte Einheiten", "Was du konkret gemacht hast");
         LinearLayout card = verticalCard();
         if (sessions.isEmpty()) {
-            TextView empty = text("Noch keine abgeschlossene Lerneinheit. Starte im Tab „Lernen“ – danach erscheint sie hier.", 12, MUTED, Typeface.NORMAL);
+            TextView empty = text("Noch keine abgeschlossene Lerneinheit. Starte im Tab „Lernen“ – danach erscheint sie hier.", 12, palette.muted, Typeface.NORMAL);
             empty.setPadding(0, dp(8), 0, dp(8));
             card.addView(empty);
         } else {
@@ -163,19 +168,19 @@ public final class DashboardView extends ScrollView {
                 row.setGravity(Gravity.CENTER_VERTICAL);
                 TextView icon = text(modeGlyph(session.mode), 18, colorForMode(session.mode), Typeface.BOLD);
                 icon.setGravity(Gravity.CENTER);
-                icon.setBackground(rounded(0x0FD94A36, 0, 0, 11));
+                icon.setBackground(rounded(palette.dark ? 0x22FF715C : 0x0FD94A36, 0, 0, 11));
                 row.addView(icon, new LinearLayout.LayoutParams(dp(44), dp(44)));
 
                 LinearLayout labels = new LinearLayout(getContext());
                 labels.setOrientation(LinearLayout.VERTICAL);
                 labels.setPadding(dp(12), 0, 0, 0);
-                labels.addView(text(UsageStore.modeLabel(session.mode), 12, INK, Typeface.BOLD));
+                labels.addView(text(UsageStore.modeLabel(session.mode), 12, palette.ink, Typeface.BOLD));
                 java.time.LocalDate date;
                 try { date = java.time.LocalDate.parse(session.date); }
                 catch (Exception ignored) { date = java.time.LocalDate.now(); }
-                labels.addView(text(date.format(formatter) + " · " + session.itemCount + " Inhalte", 9, MUTED, Typeface.NORMAL));
+                labels.addView(text(date.format(formatter) + " · " + session.itemCount + " Inhalte", 9, palette.muted, Typeface.NORMAL));
                 row.addView(labels, new LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f));
-                row.addView(text(formatTime(session.durationSeconds), 11, INK, Typeface.BOLD));
+                row.addView(text(formatTime(session.durationSeconds), 11, palette.ink, Typeface.BOLD));
                 card.addView(row, marginParams(LayoutParams.MATCH_PARENT, dp(58), 0, i == 0 ? 0 : 5, 0, 0));
             }
         }
@@ -183,19 +188,19 @@ public final class DashboardView extends ScrollView {
     }
 
     private void addEyebrow(String value) {
-        TextView view = text(value, 10, RED, Typeface.BOLD);
+        TextView view = text(value, 10, palette.red, Typeface.BOLD);
         view.setLetterSpacing(0.14f);
         content.addView(view);
     }
 
     private void addTitle(String value) {
-        TextView view = text(value, 34, INK, Typeface.BOLD);
+        TextView view = text(value, 34, palette.ink, Typeface.BOLD);
         view.setLineSpacing(0, 0.93f);
         content.addView(view, marginParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT, 0, 7, 0, 0));
     }
 
     private void addSubtitle(String value) {
-        TextView view = text(value, 13, MUTED, Typeface.NORMAL);
+        TextView view = text(value, 13, palette.muted, Typeface.NORMAL);
         view.setLineSpacing(0, 1.35f);
         content.addView(view, marginParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT, 0, 12, 0, 0));
     }
@@ -203,8 +208,8 @@ public final class DashboardView extends ScrollView {
     private void addSectionTitle(String title, String subtitle) {
         LinearLayout row = new LinearLayout(getContext());
         row.setGravity(Gravity.BOTTOM);
-        TextView heading = text(title, 19, INK, Typeface.BOLD);
-        TextView detail = text(subtitle, 9, MUTED, Typeface.BOLD);
+        TextView heading = text(title, 19, palette.ink, Typeface.BOLD);
+        TextView detail = text(subtitle, 9, palette.muted, Typeface.BOLD);
         detail.setGravity(Gravity.END);
         row.addView(heading, new LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f));
         row.addView(detail);
@@ -215,7 +220,7 @@ public final class DashboardView extends ScrollView {
         LinearLayout card = new LinearLayout(getContext());
         card.setOrientation(LinearLayout.VERTICAL);
         card.setPadding(dp(16), dp(16), dp(16), dp(10));
-        card.setBackground(rounded(PAPER_LIGHT, 1, LINE, 17));
+        card.setBackground(rounded(palette.paperLight, 1, palette.line, 17));
         return card;
     }
 
@@ -260,6 +265,15 @@ public final class DashboardView extends ScrollView {
     }
 
     private int colorForMode(String mode) {
+        if (palette.dark) {
+            switch (mode) {
+                case "words": return 0xFFF3C75F;
+                case "kanji": return palette.red;
+                case "kanji-words": return 0xFFFF8A72;
+                case "conversation": return palette.green;
+                default: return 0xFF73BDD4;
+            }
+        }
         switch (mode) {
             case "words": return 0xFFF0B943;
             case "kanji": return 0xFFD94A36;
@@ -279,7 +293,7 @@ public final class DashboardView extends ScrollView {
         }
     }
 
-    private static final class ActivityChart extends View {
+    private final class ActivityChart extends View {
         private final List<UsageStore.DayStat> days;
         private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private float progress = 0f;
@@ -287,7 +301,7 @@ public final class DashboardView extends ScrollView {
         ActivityChart(Context context, List<UsageStore.DayStat> source) {
             super(context);
             days = new ArrayList<>(source);
-            setBackground(roundedStatic(context, PAPER_LIGHT, LINE, 18));
+            setBackground(roundedStatic(context, palette.paperLight, palette.line, 18));
             setContentDescription("Balkendiagramm der Lernminuten der letzten vierzehn Tage");
         }
 
@@ -316,7 +330,7 @@ public final class DashboardView extends ScrollView {
             float slot = (right - left) / Math.max(1, days.size());
             float barWidth = Math.max(dpStatic(getContext(), 7), slot * 0.56f);
 
-            paint.setColor(0xFFE7E1D8);
+            paint.setColor(palette.chartGrid);
             paint.setStrokeWidth(dpStatic(getContext(), 1));
             for (int i = 0; i < 3; i++) {
                 float y = top + (baseline - top) * i / 2f;
@@ -329,7 +343,7 @@ public final class DashboardView extends ScrollView {
                 UsageStore.DayStat day = days.get(i);
                 float x = left + slot * i + slot / 2f;
                 float barHeight = (baseline - top) * (day.seconds / (float) max) * progress;
-                paint.setColor(day.seconds > 0 ? GREEN : 0xFFD7D2C9);
+                paint.setColor(day.seconds > 0 ? palette.green : palette.emptyBar);
                 canvas.drawRoundRect(
                     x - barWidth / 2f,
                     baseline - Math.max(dpStatic(getContext(), 4), barHeight),
@@ -340,7 +354,7 @@ public final class DashboardView extends ScrollView {
                     paint
                 );
                 if (i % 2 == 0 || i == days.size() - 1) {
-                    paint.setColor(MUTED);
+                    paint.setColor(palette.muted);
                     paint.setTextSize(dpStatic(getContext(), 8));
                     canvas.drawText(day.date.format(DateTimeFormatter.ofPattern("dd.")), x, height - dpStatic(getContext(), 14), paint);
                 }

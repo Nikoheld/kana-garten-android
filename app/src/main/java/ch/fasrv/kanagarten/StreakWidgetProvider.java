@@ -59,6 +59,15 @@ public final class StreakWidgetProvider extends AppWidgetProvider {
         }
 
         RemoteViews views = new RemoteViews(context.getPackageName(), R.layout.widget_streak);
+        AppPalette palette = new AppPalette(AppPalette.isDark(context));
+        views.setInt(
+            R.id.widget_root,
+            "setBackgroundResource",
+            palette.dark ? R.drawable.widget_background_dark : R.drawable.widget_background
+        );
+        views.setTextColor(R.id.widget_label, palette.muted);
+        views.setTextColor(R.id.widget_streak, palette.ink);
+        views.setTextColor(R.id.widget_message, palette.red);
         views.setImageViewResource(R.id.widget_mascot, mascot);
         views.setTextViewText(R.id.widget_streak, streak + (streak == 1 ? " Tag" : " Tage"));
         views.setTextViewText(R.id.widget_message, message);
