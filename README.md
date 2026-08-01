@@ -13,10 +13,10 @@ Eine vollständige, offlinefähige Android-App zum Lesen, Verstehen und Sprechen
 ## Funktionen
 
 - Hiragana und Katakana, frei kombinierbare Reihen und Eselsbrücken
-- Kana-Wörter von JLPT N5 bis N1
+- 65 kombinierbare Alltagsszenarien mit 750+ Kana-Wörtern, Einzelwortauswahl und globalem Spaced-Repetition-Topf
 - einzelne Kanji und Kanji-Wörter von N5 bis N1
 - Gesprächstraining mit Tonhöhenmustern, Mora-Rhythmus, deutscher Übersetzung, Aufnahme und japanischer Sprachausgabe
-- zeitbasiertes Spaced Repetition nach 1, 7 und 30 Tagen; unsichere Antworten kommen nach kurzer Zeit erneut
+- zeitbasiertes Spaced Repetition mit wachsenden Abständen von 4 Stunden bis 120 Tagen; unsichere Antworten kommen nach kurzer Zeit erneut
 - vollständig offline gebündelte Inhalte, Datensätze und Noto Sans JP
 - doppelte Fortschrittssicherung: Web-Speicher plus natives Android-Backup
 - lokales Usage-Dashboard mit Lernzeit pro Tag, Bereich, Woche, Streak, fälligen Reviews und letzten Einheiten
