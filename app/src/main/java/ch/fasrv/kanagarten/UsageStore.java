@@ -148,7 +148,10 @@ public final class UsageStore {
                 if (names == null) continue;
                 for (int i = 0; i < names.length(); i++) {
                     JSONObject stat = entries.optJSONObject(names.optString(i));
-                    if (stat == null || stat.optInt("strength", 0) < 3) continue;
+                    if (stat == null || Math.max(
+                        stat.optInt("strength", 0),
+                        stat.optInt("peakStrength", 0)
+                    ) < 3) continue;
                     long nextReview = stat.optLong("nextReviewAt", Long.MAX_VALUE);
                     if (nextReview <= now) due++;
                 }

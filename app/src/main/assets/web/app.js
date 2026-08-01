@@ -1,4 +1,9 @@
-import { VOCABULARY, WORD_LEVELS } from "./vocabulary.js?v=20260723-manga";
+import {
+  VOCABULARY,
+  WORD_LEVELS,
+  VOCABULARY_GROUPS,
+  VOCABULARY_SETS,
+} from "./vocabulary.js?v=20260801-scenarios";
 import { KANJI, KANJI_LEVELS } from "./kanji.js?v=20260723-manga";
 import { KANJI_VOCABULARY, KANJI_WORD_LEVELS } from "./kanji-vocabulary.js?v=20260801-v1";
 import { CONVERSATIONS, CONVERSATION_LEVELS } from "./conversations.js?v=20260801-v1";
@@ -359,6 +364,10 @@ const DEFAULT_DATA = {
     mode: "hiragana",
     selectedRows: ["vowels"],
     maxWordLevel: "N5",
+    selectedWordSets: ["first-contact"],
+    includedWordIds: [],
+    excludedWordIds: [],
+    wordScenarioGroup: "essentials",
     maxKanjiLevel: "N5",
     maxKanjiWordLevel: "N5",
     maxConversationLevel: "N5",
@@ -410,6 +419,10 @@ let state = {
   learningMode: data.settings.learningMode || "kana",
   mode: data.settings.mode || "hiragana",
   maxWordLevel: data.settings.maxWordLevel || "N5",
+  selectedWordSets: new Set(data.settings.selectedWordSets || ["first-contact"]),
+  includedWordIds: new Set(data.settings.includedWordIds || []),
+  excludedWordIds: new Set(data.settings.excludedWordIds || []),
+  wordScenarioGroup: data.settings.wordScenarioGroup || "essentials",
   maxKanjiLevel: data.settings.maxKanjiLevel || "N5",
   maxKanjiWordLevel: data.settings.maxKanjiWordLevel || "N5",
   maxConversationLevel: data.settings.maxConversationLevel || "N5",
@@ -513,6 +526,10 @@ function saveData() {
   data.settings.mode = state.mode;
   data.settings.selectedRows = [...state.selectedRows];
   data.settings.maxWordLevel = state.maxWordLevel;
+  data.settings.selectedWordSets = [...state.selectedWordSets];
+  data.settings.includedWordIds = [...state.includedWordIds];
+  data.settings.excludedWordIds = [...state.excludedWordIds];
+  data.settings.wordScenarioGroup = state.wordScenarioGroup;
   data.settings.maxKanjiLevel = state.maxKanjiLevel;
   data.settings.maxKanjiWordLevel = state.maxKanjiWordLevel;
   data.settings.maxConversationLevel = state.maxConversationLevel;
@@ -571,11 +588,62 @@ function getItemsForSelection() {
   );
 }
 
-function getEligibleWords() {
+function getLevelEligibleWords() {
   const maxIndex = WORD_LEVELS.findIndex((level) => level.id === state.maxWordLevel);
   return VOCABULARY.filter((word) => word.levelIndex <= maxIndex).sort(
     (a, b) => a.frequency - b.frequency,
   );
+}
+
+function getWordsForSet(setId, respectLevel = true) {
+  const set = VOCABULARY_SETS.find((entry) => entry.id === setId);
+  if (!set) return [];
+  const maxIndex = WORD_LEVELS.findIndex((level) => level.id === state.maxWordLevel);
+  return set.wordIds
+    .map((id) => WORD_BY_ID.get(id))
+    .filter((word) => word && (!respectLevel || word.levelIndex <= maxIndex));
+}
+
+function getSelectedWordIdSet() {
+  const selected = new Set(state.includedWordIds);
+  state.selectedWordSets.forEach((setId) => {
+    getWordsForSet(setId).forEach((word) => selected.add(word.id));
+  });
+  state.excludedWordIds.forEach((id) => selected.delete(id));
+  return selected;
+}
+
+function wordSelectionPriority(word) {
+  const selectedRanks = [...state.selectedWordSets]
+    .map((setId) => word.setRanks?.[setId])
+    .filter(Number.isFinite);
+  const scenarioRank = selectedRanks.length ? Math.min(...selectedRanks) : 999;
+  return word.levelIndex * 10_000 + scenarioRank * 100 + word.frequency;
+}
+
+function getEligibleWords() {
+  const selectedIds = getSelectedWordIdSet();
+  return getLevelEligibleWords()
+    .filter((word) => selectedIds.has(word.id))
+    .sort((a, b) => wordSelectionPriority(a) - wordSelectionPriority(b));
+}
+
+function getGlobalReviewWords(dueOnly = true) {
+  return VOCABULARY
+    .filter((word) => {
+      const stat = data.words[word.id];
+      if (!stat || Number(stat.peakStrength || 0) < 3) return false;
+      return !dueOnly || isWordReviewDue(word);
+    })
+    .sort((a, b) => {
+      const aStat = data.words[a.id] || {};
+      const bStat = data.words[b.id] || {};
+      const dueDifference =
+        Number(aStat.nextReviewAt || aStat.lastPracticed || 0) -
+        Number(bStat.nextReviewAt || bStat.lastPracticed || 0);
+      if (dueDifference) return dueDifference;
+      return wordDifficultyScore(b.id) - wordDifficultyScore(a.id);
+    });
 }
 
 function getWordStrength(wordId) {
@@ -588,7 +656,7 @@ function getWordStats() {
   const learned = eligible.filter((word) => getWordStrength(word.id) >= 3).length;
   const seen = stats.reduce((sum, stat) => sum + (stat.seen || 0), 0);
   const correct = stats.reduce((sum, stat) => sum + (stat.correct || 0), 0);
-  const reviewDue = eligible.filter((word) => isWordReviewDue(word)).length;
+  const reviewDue = getGlobalReviewWords().length;
   return {
     total: eligible.length,
     learned,
@@ -616,7 +684,7 @@ function wordDifficultyScore(wordId) {
 }
 
 function getHardWords(limit = 20) {
-  return getEligibleWords()
+  return VOCABULARY
     .filter((word) => wordDifficultyScore(word.id) >= 0.75)
     .sort((a, b) => {
       const scoreDifference = wordDifficultyScore(b.id) - wordDifficultyScore(a.id);
@@ -867,9 +935,14 @@ function reviewInterval(strength) {
 
 function spacedReviewDelay(strength) {
   const day = 24 * 60 * 60 * 1000;
-  if (strength >= 5) return 30 * day;
-  if (strength >= 4) return 7 * day;
-  return day;
+  if (strength >= 10) return 120 * day;
+  if (strength >= 9) return 60 * day;
+  if (strength >= 8) return 30 * day;
+  if (strength >= 7) return 14 * day;
+  if (strength >= 6) return 7 * day;
+  if (strength >= 5) return 3 * day;
+  if (strength >= 4) return day;
+  return 4 * 60 * 60 * 1000;
 }
 
 function updateNextReview(stat, wasCorrect) {
@@ -882,7 +955,7 @@ function updateNextReview(stat, wasCorrect) {
 
 function isWordReviewDue(word) {
   const stat = data.words[word.id];
-  if (!stat || Number(stat.strength || 0) < 3) return false;
+  if (!stat || Number(stat.peakStrength || 0) < 3) return false;
   if (stat.nextReviewAt) return Date.now() >= Number(stat.nextReviewAt);
   return Number(data.wordPromptCount || 0) - Number(stat.lastPrompt || 0) >= reviewInterval(stat.strength);
 }
@@ -901,7 +974,7 @@ function recordWordAttempt(word, wasCorrect) {
   stat.lastPrompt = data.wordPromptCount;
   if (wasCorrect) {
     stat.correct += 1;
-    stat.strength = Math.min(5, Number(stat.strength || 0) + 1);
+    stat.strength = Math.min(10, Number(stat.strength || 0) + 1);
     stat.peakStrength = Math.max(stat.peakStrength || 0, stat.strength);
   } else {
     stat.wrong += 1;
@@ -1170,7 +1243,7 @@ function renderHome() {
     : isKanji
       ? "Kanji für Manga lesen"
       : isKanaWords
-        ? "Kana-Wortschatz · JLPT N5 bis N1"
+        ? "65 Alltagsszenarien · JLPT N5 bis N1"
         : "Kana für Manga lesen";
   const heroTitle = isConversation
     ? "Japanisch, das <em>natürlich klingt.</em>"
@@ -1188,7 +1261,7 @@ function renderHome() {
     : isKanji
       ? "Erkenne das Kanji, tippe seine deutsche Bedeutung und entdecke danach Lesung und Manga-Beispiel. Von einfachen Zeichen bis zu komplexen Story-Begriffen."
       : isKanaWords
-        ? "Lies japanische Wörter ohne Kanji und schreibe ihre deutsche Bedeutung. Dein Pfad führt von häufigen N5-Wörtern bis zu anspruchsvollem N1-Wortschatz."
+        ? "Wähle genau die Situationen und Wörter, die du brauchst – vom Restaurant und Bahnhof bis zu Arbeit, Arzt und Behörden. Alles Gelernte bleibt im globalen Wiederholungstopf."
         : "Trainiere Hiragana und Katakana für Sprechblasen, Namen und Soundeffekte. Wähle deine Reihen oder starte direkt mit einem Manga-Pfad.";
   const hardTitle = isConversation
     ? "Deine schwierigen Gespräche"
@@ -1368,66 +1441,133 @@ function renderKanaSetup() {
 
 function renderWordSetup() {
   const words = getEligibleWords();
-  const maxLevelIndex = WORD_LEVELS.findIndex(
-    (level) => level.id === state.maxWordLevel,
+  const selectedIds = getSelectedWordIdSet();
+  const dueWords = getGlobalReviewWords();
+  const learnedWords = getGlobalReviewWords(false);
+  const activeGroup = VOCABULARY_GROUPS.find(
+    (group) => group.id === state.wordScenarioGroup,
   );
+  const visibleSets = activeGroup
+    ? VOCABULARY_SETS.filter((set) => set.groupId === activeGroup.id)
+    : VOCABULARY_SETS;
+  const pickerWords = activeGroup
+    ? [...new Set(visibleSets.flatMap((set) => getWordsForSet(set.id).map((word) => word.id)))]
+        .map((id) => WORD_BY_ID.get(id))
+        .filter(Boolean)
+    : getLevelEligibleWords();
   return `
     <section class="setup word-setup" id="setup" aria-labelledby="setup-title">
       <div class="section-heading">
         <div>
-          <span class="eyebrow">Dein JLPT-Kana-Wortpfad</span>
-          <h2 id="setup-title">Von N5 bis N1. Schritt für Schritt.</h2>
+          <span class="eyebrow">Dein persönlicher Wortschatz</span>
+          <h2 id="setup-title">Wähle Situationen oder einzelne Wörter.</h2>
         </div>
-        <p>Wähle dein Ziellevel. Alle einfacheren Stufen sind automatisch dabei und häufige Wörter kommen immer zuerst.</p>
+        <p>Du bestimmst, was du brauchst. Innerhalb jeder Auswahl kommen einfache, häufige Wörter zuerst und schwierigere später.</p>
       </div>
 
       <div class="word-mode-note" aria-label="Lernmodus">
-        <span aria-hidden="true">あ</span>
-        <div><strong>Nur Kana, keine Kanji</strong><small>Japanisches Wort sehen · deutsche Bedeutung eingeben · schwierige Wörter gezielt wiederholen</small></div>
+        <span aria-hidden="true">語</span>
+        <div><strong>Wie beim Kana-Lernen – ein Wort nach dem anderen</strong><small>Japanisches Wort sehen · deutsche Bedeutung eingeben · Fehler kommen später erneut · drei sichere Treffer festigen das Wort</small></div>
       </div>
 
-      <div class="jlpt-word-path" role="radiogroup" aria-label="Maximales JLPT-Level für Kana-Wörter">
-        ${WORD_LEVELS.map((level, levelIndex) => {
+      <div class="word-level-toolbar">
+        <div><strong>Maximales Sprachlevel</strong><small>Einfachere Wörter sind immer enthalten.</small></div>
+        <div class="word-level-pills" role="radiogroup" aria-label="Maximales JLPT-Level für Kana-Wörter">
+          ${WORD_LEVELS.map((level) => {
           const active = state.maxWordLevel === level.id;
-          const included = levelIndex <= maxLevelIndex;
-          const levelWords = VOCABULARY.filter((word) => word.level === level.id);
-          const levelStats = getWordLevelStats(level.id);
-          const preview = levelWords.slice(0, 5).map((word) => word.kana).join(" · ");
-          const progress = levelStats.total
-            ? Math.round((levelStats.learned / levelStats.total) * 100)
-            : 0;
           return `
-            <button class="word-level-row${included ? " included" : ""}${active ? " active" : ""}" type="button" role="radio" aria-checked="${active}" data-action="set-word-level" data-level="${level.id}">
-              <span class="word-level-step"><b>${level.label}</b><small>${levelIndex === 0 ? "Start" : levelIndex === WORD_LEVELS.length - 1 ? "Ziel" : `Stufe ${levelIndex + 1}`}</small></span>
-              <span class="word-level-copy">
-                <strong>${level.title}</strong>
-                <small>${level.description}</small>
-                <em lang="ja">${preview}</em>
-              </span>
-              <span class="word-level-progress">
-                <span><b>${levelStats.learned}</b> / ${levelStats.total} sicher</span>
-                <i><u style="width:${progress}%"></u></i>
-              </span>
-              <span class="word-level-state">${active ? "Dein Ziel" : included ? "Enthalten" : "Als Ziel wählen"}</span>
+            <button class="word-level-pill${active ? " active" : ""}" type="button" role="radio" aria-checked="${active}" data-action="set-word-level" data-level="${level.id}">
+              <strong>${level.label}</strong><small>${level.title}</small>
             </button>
           `;
         }).join("")}
+        </div>
       </div>
 
-      <div class="cycle-explainer">
-        <div class="cycle-visual" aria-hidden="true">
-          <span>みず</span><span>ねこ</span><span>いえ</span><span>ほん</span>
-        </div>
+      <div class="srs-pot-card">
+        <div class="srs-pot-icon" aria-hidden="true">壺</div>
         <div>
-          <strong>Vier Kana-Wörter. Drei sichere Treffer.</strong>
-          <p>Falsche Antworten kommen in derselben Runde wieder. Sichere Wörter kehren später mit größerem Abstand zur Langzeit-Wiederholung zurück.</p>
+          <span class="eyebrow">Globaler Spaced-Repetition-Topf</span>
+          <strong>${dueWords.length ? `${dueWords.length} Wörter sind jetzt fällig.` : "Gerade ist alles frisch."}</strong>
+          <p>${learnedWords.length} dauerhaft gespeicherte Wörter. Sie bleiben im Topf, auch wenn du später ganz andere Sets auswählst.</p>
+        </div>
+        <button class="secondary-button" type="button" data-action="start-word-review" ${dueWords.length ? "" : "disabled"}>${dueWords.length ? "Fällige wiederholen" : "Nichts fällig"}</button>
+      </div>
+
+      <div class="scenario-heading">
+        <div>
+          <span class="eyebrow">${VOCABULARY_SETS.length} Situationen · ${VOCABULARY.length} Wörter</span>
+          <h3>Was möchtest du als Nächstes können?</h3>
+        </div>
+        <div class="scenario-selection-actions">
+          <button type="button" data-action="select-word-group">Alle in diesem Bereich</button>
+          <button type="button" data-action="clear-word-selection">Auswahl leeren</button>
+        </div>
+      </div>
+
+      <div class="scenario-group-tabs" role="tablist" aria-label="Szenariobereiche">
+        ${VOCABULARY_GROUPS.map((group) => `
+          <button class="${group.id === state.wordScenarioGroup ? "active" : ""}" type="button" role="tab" aria-selected="${group.id === state.wordScenarioGroup}" data-action="set-word-group" data-group="${group.id}">
+            <span aria-hidden="true">${group.icon}</span><strong>${group.title}</strong><small>${group.description}</small>
+          </button>
+        `).join("")}
+        <button class="${state.wordScenarioGroup === "all" ? "active" : ""}" type="button" role="tab" aria-selected="${state.wordScenarioGroup === "all"}" data-action="set-word-group" data-group="all">
+          <span aria-hidden="true">全</span><strong>Alle Wörter</strong><small>Einzelne Wörter frei suchen</small>
+        </button>
+      </div>
+
+      ${activeGroup ? `
+        <div class="scenario-section-intro">
+          <span aria-hidden="true">${activeGroup.icon}</span>
+          <div><strong>${activeGroup.title}</strong><small>${activeGroup.description} · ${visibleSets.length} Szenarien</small></div>
+        </div>
+        <div class="scenario-set-grid">
+          ${visibleSets.map((set) => {
+            const setWords = getWordsForSet(set.id);
+            const allSetWords = getWordsForSet(set.id, false);
+            const selected = state.selectedWordSets.has(set.id);
+            const learned = setWords.filter((word) => getWordStrength(word.id) >= 3).length;
+            const preview = setWords.slice(0, 4).map((word) => word.kana).join(" · ");
+            return `
+              <button class="scenario-set-card${selected ? " selected" : ""}" type="button" data-action="toggle-word-set" data-set="${set.id}" ${setWords.length ? "" : "disabled"} aria-pressed="${selected}">
+                <span class="scenario-set-check" aria-hidden="true">${selected ? "✓" : "+"}</span>
+                <span class="scenario-set-icon" aria-hidden="true">${WORD_BY_ID.get(set.wordIds[0])?.kana.slice(0, 1) || "語"}</span>
+                <span class="scenario-set-copy"><strong>${set.title}</strong><small>${set.description}</small><em lang="ja">${preview || "Höheres Level wählen"}</em></span>
+                <span class="scenario-set-meta"><b>${learned}/${setWords.length}</b> sicher · ${allSetWords.length} gesamt · ${set.level}</span>
+              </button>
+            `;
+          }).join("")}
+        </div>
+      ` : ""}
+
+      <details class="individual-word-picker" ${state.wordScenarioGroup === "all" ? "open" : ""}>
+        <summary><span><strong>Einzelne Wörter auswählen</strong><small>${pickerWords.length} Wörter in diesem Bereich · unabhängig von ganzen Sets wählbar</small></span><b>Öffnen</b></summary>
+        <div class="word-picker-tools">
+          <label for="word-search">Wort suchen</label>
+          <input id="word-search" type="search" placeholder="Japanisch oder Deutsch …" autocomplete="off">
+        </div>
+        <div class="individual-word-grid" id="individual-word-grid">
+          ${pickerWords.map((word) => `
+            <button class="individual-word${selectedIds.has(word.id) ? " selected" : ""}" type="button" data-action="toggle-word" data-word="${word.id}" data-search="${`${word.kana} ${word.primary} ${word.answers.join(" ")}`.toLowerCase()}">
+              <span aria-hidden="true">${selectedIds.has(word.id) ? "✓" : "+"}</span><b lang="ja">${word.kana}</b><small>${word.primary}</small><em>${word.level}</em>
+            </button>
+          `).join("")}
+        </div>
+        <p class="word-search-empty" id="word-search-empty" hidden>Kein passendes Wort in diesem Bereich gefunden.</p>
+      </details>
+
+      <div class="cycle-explainer scenario-cycle-explainer">
+        <div class="cycle-visual" aria-hidden="true"><span>みず</span><span>ねこ</span><span>いえ</span><span>ほん</span></div>
+        <div>
+          <strong>Immer nur 3–5 aktive Wörter.</strong>
+          <p>Die App arbeitet deine gesamte Auswahl in kleinen Gruppen ab. Fehler kehren innerhalb der Runde zurück; fällige Wörter aus dem globalen Topf mischen sich dosiert dazwischen.</p>
         </div>
       </div>
 
       <div class="start-bar">
-        <div class="selection-count"><strong>${words.length}</strong> <span>Kana-Wörter · ${state.maxWordLevel === "N5" ? "JLPT N5" : `JLPT N5 bis ${state.maxWordLevel}`}</span></div>
-        <button class="primary-button" type="button" data-action="start-word-session">
-          Kana-Wörter starten <span aria-hidden="true">→</span>
+        <div class="selection-count"><strong>${words.length}</strong> <span>Wörter ausgewählt · bis ${state.maxWordLevel}</span></div>
+        <button class="primary-button" type="button" data-action="start-word-session" ${words.length ? "" : "disabled"}>
+          Auswahl lernen <span aria-hidden="true">→</span>
         </button>
       </div>
     </section>
@@ -1777,41 +1917,38 @@ function startWordSession(wordPool = null, sourceOverride = null) {
   const candidates = focusedPractice
     ? eligible
     : maintenance
-    ? [...eligible].sort(
+    ? [...eligible]
+        .sort(
         (a, b) =>
-          Number(data.words[a.id]?.lastPrompt || 0) -
-          Number(data.words[b.id]?.lastPrompt || 0),
-      )
+            Number(data.words[a.id]?.nextReviewAt || data.words[a.id]?.lastPracticed || 0) -
+            Number(data.words[b.id]?.nextReviewAt || data.words[b.id]?.lastPracticed || 0),
+        )
+        .slice(0, 5)
     : weakWords;
-  const cycleWords = candidates.slice(0, 4);
-  if (!maintenance && cycleWords.length < 3) {
-    const cycleIds = new Set(cycleWords.map((word) => word.id));
-    const reviewFillers = eligible
-      .filter((word) => !cycleIds.has(word.id) && getWordStrength(word.id) >= 3)
-      .sort(
-        (a, b) =>
-          Number(data.words[a.id]?.lastPrompt || 0) -
-          Number(data.words[b.id]?.lastPrompt || 0),
-      );
-    cycleWords.push(...reviewFillers.slice(0, 3 - cycleWords.length));
-  }
-  if (!cycleWords.length) {
-    showToast("Für dieses Level sind noch keine Wörter vorhanden.");
+  if (!candidates.length) {
+    showToast("Wähle mindestens ein Wort oder ein Szenario aus.");
     return;
   }
 
   clearTimeout(state.timer);
+  const targetIds = candidates.map((word) => word.id);
+  const reviewOnly = maintenance || sourceOverride === "srs-review";
   state.session = {
     kind: "words",
-    source: sourceOverride || (maintenance ? "maintenance" : "word-cycle"),
+    source: sourceOverride || (maintenance ? "maintenance" : "word-selection"),
     maxLevel: state.maxWordLevel,
-    cycleIds: cycleWords.map((word) => word.id),
-    itemIds: cycleWords.map((word) => word.id),
-    queue: shuffle(cycleWords.map((word) => word.id)),
+    cycleIds: [],
+    targetIds: new Set(targetIds),
+    itemIds: targetIds,
+    pendingIds: [...targetIds],
+    queue: [],
     currentId: null,
     mastered: new Set(),
     reviewedIds: new Set(),
     maintenance,
+    reviewOnly,
+    answersSinceReview: 0,
+    completedCycles: 0,
     attempts: 0,
     correctAttempts: 0,
     wrongAttempts: 0,
@@ -1820,7 +1957,17 @@ function startWordSession(wordPool = null, sourceOverride = null) {
     locked: false,
   };
   state.view = "quiz";
+  loadNextWordCycle();
   advanceWordSession();
+}
+
+function startWordReviewSession() {
+  const dueWords = getGlobalReviewWords();
+  if (!dueWords.length) {
+    showToast("Im Wiederholungstopf ist gerade nichts fällig.");
+    return;
+  }
+  startWordSession(dueWords, "srs-review");
 }
 
 function startHardWordSession() {
@@ -1838,16 +1985,28 @@ function advanceWordSession() {
   if (session.queue.length === 0) {
     const cycleComplete = session.cycleIds.every((id) => session.mastered.has(id));
     if (cycleComplete) {
-      finishWordSession();
-      return;
+      session.completedCycles += 1;
+      if (session.pendingIds.length) loadNextWordCycle();
+      else {
+        finishWordSession();
+        return;
+      }
+    } else {
+      session.queue = shuffle(
+        session.cycleIds.filter((id) => !session.mastered.has(id)),
+      );
     }
-    session.queue = shuffle(
-      session.cycleIds.filter((id) => !session.mastered.has(id)),
-    );
   }
   session.currentId = session.queue.shift();
   session.locked = false;
   renderWordQuiz();
+}
+
+function loadNextWordCycle() {
+  const session = state.session;
+  if (!session || session.kind !== "words") return;
+  session.cycleIds = session.pendingIds.splice(0, 4);
+  session.queue = shuffle(session.cycleIds);
 }
 
 function insertWordLater(wordId, minDistance = 2) {
@@ -1863,21 +2022,20 @@ function insertWordLater(wordId, minDistance = 2) {
 function maybeInsertWordReview() {
   const session = state.session;
   if (!session || session.kind !== "words") return;
-  if (session.source === "hard-words") return;
+  if (session.source === "hard-words" || session.source === "srs-review") return;
+  session.answersSinceReview += 1;
+  if (session.answersSinceReview < 4) return;
   const excluded = new Set([
     ...session.cycleIds,
     ...session.queue,
     ...session.reviewedIds,
     session.currentId,
   ]);
-  const review = getEligibleWords()
-    .filter((word) => !excluded.has(word.id) && isWordReviewDue(word))
-    .sort(
-      (a, b) =>
-        Number(data.words[a.id]?.lastPrompt || 0) -
-        Number(data.words[b.id]?.lastPrompt || 0),
-    )[0];
-  if (review) insertWordLater(review.id, 2);
+  const review = getGlobalReviewWords().find((word) => !excluded.has(word.id));
+  if (review) {
+    session.answersSinceReview = 0;
+    insertWordLater(review.id, 2);
+  }
 }
 
 function wordConfidenceDots(strength) {
@@ -1894,9 +2052,11 @@ function renderWordQuiz() {
   const session = state.session;
   if (!session || session.kind !== "words") return;
   const word = WORD_BY_ID.get(session.currentId);
-  const isReview = !session.cycleIds.includes(word.id);
+  const isInjectedReview = !session.targetIds.has(word.id);
+  const isReview = isInjectedReview || session.reviewOnly;
   const focusedPractice = session.source === "hard-words";
-  const total = session.cycleIds.length;
+  const srsReview = session.source === "srs-review";
+  const total = session.itemIds.length;
   const mastered = session.mastered.size;
   const accuracy = formatPercent(session.correctAttempts, session.attempts);
   const strength = getWordStrength(word.id);
@@ -1914,7 +2074,7 @@ function renderWordQuiz() {
           <span class="progress-label">${mastered} / ${total}</span>
         </div>
         <div class="quiz-stats">
-          <div class="quiz-stat"><span>Gruppe</span><strong>${total} ${total === 1 ? "Wort" : "Wörter"}</strong></div>
+          <div class="quiz-stat"><span>Aktiv</span><strong>${session.cycleIds.length} Wörter</strong></div>
           <div class="quiz-stat"><span>Genauigkeit</span><strong>${accuracy}</strong></div>
           <div class="quiz-stat"><span>Fehler</span><strong>${session.wrongAttempts}</strong></div>
         </div>
@@ -1922,7 +2082,7 @@ function renderWordQuiz() {
 
       <section class="quiz-stage word-quiz-stage" aria-labelledby="quiz-prompt">
         <div class="word-cycle-badge ${isReview ? "review" : ""}${focusedPractice ? " hard-word-badge" : ""}">
-          ${focusedPractice ? `◆ Schwierige Wörter · ${word.level}` : isReview ? "↻ Langzeit-Wiederholung" : `Aktuelle Lerngruppe · ${word.level}`}
+          ${focusedPractice ? `◆ Schwierige Wörter · ${word.level}` : srsReview ? "↻ Spaced-Repetition-Topf" : isInjectedReview ? "↻ Globale Langzeit-Wiederholung" : `Lerngruppe ${session.completedCycles + 1} · ${word.level}`}
         </div>
         <p class="quiz-prompt" id="quiz-prompt">Was bedeutet dieses japanische Wort?</p>
         <div class="quiz-kana-wrap word-card-wrap">
@@ -1975,7 +2135,8 @@ function submitWordAnswer(rawAnswer, revealed = false) {
   if (!answer && !revealed) return;
   const wasCorrect =
     !revealed && word.answers.map(normalizeGerman).includes(answer);
-  const isReview = !session.cycleIds.includes(word.id);
+  const isInjectedReview = !session.targetIds.has(word.id);
+  const isReview = isInjectedReview || session.reviewOnly;
 
   session.locked = true;
   session.attempts += 1;
@@ -1986,12 +2147,12 @@ function submitWordAnswer(rawAnswer, revealed = false) {
   }
   const newStrength = recordWordAttempt(word, wasCorrect);
 
-  if (isReview) {
+  if (isInjectedReview) {
     if (wasCorrect) session.reviewedIds.add(word.id);
     else insertWordLater(word.id, 2);
   } else if (
     wasCorrect &&
-    (session.maintenance || newStrength >= 3)
+    (session.reviewOnly || newStrength >= 3)
   ) {
     session.mastered.add(word.id);
   } else {
@@ -2008,7 +2169,7 @@ function submitWordAnswer(rawAnswer, revealed = false) {
     card.classList.add("quiz-card-correct");
     feedback.className = "feedback correct";
     feedback.textContent =
-      !isReview && !session.maintenance && newStrength < 3
+      !isReview && newStrength < 3
         ? `Richtig — ${word.primary} · noch ${3 - newStrength}×`
         : `Richtig — ${word.primary}`;
   } else {
@@ -2037,8 +2198,8 @@ function finishWordSession() {
   const result = {
     kind: "words",
     source: session.source,
-    itemIds: [...session.cycleIds],
-    total: session.cycleIds.length,
+    itemIds: [...session.itemIds],
+    total: session.itemIds.length,
     attempts: session.attempts,
     correctAttempts: session.correctAttempts,
     wrongAttempts: session.wrongAttempts,
@@ -3456,18 +3617,20 @@ function renderWordResult() {
   if (!result || result.kind !== "words") return renderHome();
   document.body.classList.remove("is-quizzing");
   const words = result.itemIds.map((id) => WORD_BY_ID.get(id)).filter(Boolean);
-  const learnedTotal = getWordStats().learned;
+  const learnedTotal = getGlobalReviewWords(false).length;
   const focusedPractice = result.source === "hard-words";
+  const srsReview = result.source === "srs-review";
   app.innerHTML = `
     <div class="result-view">
       <section class="result-card word-result-card" aria-labelledby="result-title">
         <div class="result-seal" aria-hidden="true">語</div>
-        <span class="eyebrow">${focusedPractice ? "Problemwörter trainiert" : result.maintenance ? "Wiederholung geschafft" : "JLPT-Lerngruppe geschafft"}</span>
-        <h1 id="result-title">${focusedPractice ? "Schwierige Wörter geknackt!" : result.maintenance ? "Wissen aufgefrischt!" : `${result.total} Wörter sitzen!`}</h1>
-        <p>${focusedPractice ? "Diese Problemwörter sind jetzt sicherer. Falls sie noch Schwierigkeiten machen, bleiben sie automatisch in deiner Wiederholungsliste." : result.maintenance ? "Diese Wörter sind wieder frisch im Gedächtnis. Ihre nächste Wiederholung kommt mit größerem Abstand." : "Alle Wörter dieser Gruppe wurden sicher erkannt. Sie verschwinden nicht: Später mischen sie sich als Wiederholung unter neue Gruppen."}</p>
+        <span class="eyebrow">${focusedPractice ? "Problemwörter trainiert" : srsReview ? "Wiederholungstopf geleert" : result.maintenance ? "Wiederholung geschafft" : "Auswahl vollständig gelernt"}</span>
+        <h1 id="result-title">${focusedPractice ? "Schwierige Wörter geknackt!" : srsReview ? "Erinnerung aufgefrischt!" : result.maintenance ? "Wissen aufgefrischt!" : `${result.total} Wörter sitzen!`}</h1>
+        <p>${focusedPractice ? "Diese Problemwörter sind jetzt sicherer. Falls sie noch Schwierigkeiten machen, bleiben sie automatisch in deiner Wiederholungsliste." : srsReview ? "Alle fälligen Wörter haben einen neuen Wiederholungstermin bekommen. Der Abstand wächst mit jeder sicheren Antwort." : result.maintenance ? "Diese Wörter sind wieder frisch im Gedächtnis. Ihre nächste Wiederholung kommt mit größerem Abstand." : "Deine gesamte Auswahl wurde in kleinen Gruppen gefestigt. Alle sicheren Wörter liegen jetzt dauerhaft im globalen Spaced-Repetition-Topf."}</p>
 
         <div class="learned-word-list" aria-label="Wörter dieser Runde">
-          ${words.map((word) => `<span><b lang="ja">${word.kana}</b><small>${word.primary}</small></span>`).join("")}
+          ${words.slice(0, 32).map((word) => `<span><b lang="ja">${word.kana}</b><small>${word.primary}</small></span>`).join("")}
+          ${words.length > 32 ? `<span class="learned-word-more"><b>+${words.length - 32}</b><small>weitere Wörter</small></span>` : ""}
         </div>
 
         <div class="result-stats">
@@ -3477,8 +3640,8 @@ function renderWordResult() {
         </div>
 
         <div class="result-actions">
-          <button class="secondary-button" type="button" data-action="home">Level & Modus</button>
-          <button class="primary-button" type="button" data-action="${focusedPractice ? "retry-word-session" : "start-word-session"}">${focusedPractice ? "Diese Wörter nochmals prüfen" : "Nächste Vierergruppe"} →</button>
+          <button class="secondary-button" type="button" data-action="home">Sets & Wörter wählen</button>
+          <button class="primary-button" type="button" data-action="${focusedPractice ? "retry-word-session" : "home"}">${focusedPractice ? "Diese Wörter nochmals prüfen" : "Zur Wortschatz-Auswahl"} →</button>
         </div>
       </section>
     </div>
@@ -3636,6 +3799,10 @@ function resetProgress() {
       state.learningMode = "kana";
       state.mode = "hiragana";
       state.maxWordLevel = "N5";
+      state.selectedWordSets = new Set(["first-contact"]);
+      state.includedWordIds = new Set();
+      state.excludedWordIds = new Set();
+      state.wordScenarioGroup = "essentials";
       state.maxKanjiLevel = "N5";
       state.maxKanjiWordLevel = "N5";
       state.maxConversationLevel = "N5";
@@ -3655,6 +3822,28 @@ function showToast(message) {
   window.setTimeout(() => {
     region.innerHTML = "";
   }, 3000);
+}
+
+function refreshWordSelectionControls() {
+  const selectedIds = getSelectedWordIdSet();
+  document.querySelectorAll(".individual-word[data-word]").forEach((button) => {
+    const selected = selectedIds.has(button.dataset.word);
+    button.classList.toggle("selected", selected);
+    const mark = button.querySelector("span");
+    if (mark) mark.textContent = selected ? "✓" : "+";
+  });
+  document.querySelectorAll(".scenario-set-card[data-set]").forEach((button) => {
+    const selected = state.selectedWordSets.has(button.dataset.set);
+    button.classList.toggle("selected", selected);
+    button.setAttribute("aria-pressed", String(selected));
+    const mark = button.querySelector(".scenario-set-check");
+    if (mark) mark.textContent = selected ? "✓" : "+";
+  });
+  const count = document.querySelector(".word-setup .start-bar .selection-count strong");
+  const start = document.querySelector('.word-setup [data-action="start-word-session"]');
+  const total = getEligibleWords().length;
+  if (count) count.textContent = String(total);
+  if (start) start.disabled = total === 0;
 }
 
 document.addEventListener("click", (event) => {
@@ -3704,6 +3893,69 @@ document.addEventListener("click", (event) => {
     saveData();
     renderHome();
     requestAnimationFrame(() => window.scrollTo({ top: scrollPosition, behavior: "instant" }));
+  }
+
+  if (action === "set-word-group") {
+    const scrollPosition = window.scrollY;
+    state.wordScenarioGroup = trigger.dataset.group;
+    saveData();
+    renderHome();
+    requestAnimationFrame(() =>
+      window.scrollTo({ top: scrollPosition, behavior: "instant" }),
+    );
+  }
+
+  if (action === "toggle-word-set") {
+    const setId = trigger.dataset.set;
+    if (state.selectedWordSets.has(setId)) {
+      state.selectedWordSets.delete(setId);
+    } else {
+      state.selectedWordSets.add(setId);
+      getWordsForSet(setId, false).forEach((word) =>
+        state.excludedWordIds.delete(word.id),
+      );
+    }
+    saveData();
+    refreshWordSelectionControls();
+  }
+
+  if (action === "toggle-word") {
+    const wordId = trigger.dataset.word;
+    if (getSelectedWordIdSet().has(wordId)) {
+      state.includedWordIds.delete(wordId);
+      state.excludedWordIds.add(wordId);
+    } else {
+      state.excludedWordIds.delete(wordId);
+      state.includedWordIds.add(wordId);
+    }
+    saveData();
+    refreshWordSelectionControls();
+  }
+
+  if (action === "select-word-group") {
+    const sets = state.wordScenarioGroup === "all"
+      ? VOCABULARY_SETS
+      : VOCABULARY_SETS.filter(
+          (set) => set.groupId === state.wordScenarioGroup,
+        );
+    sets.forEach((set) => {
+      state.selectedWordSets.add(set.id);
+      getWordsForSet(set.id, false).forEach((word) =>
+        state.excludedWordIds.delete(word.id),
+      );
+    });
+    saveData();
+    refreshWordSelectionControls();
+    showToast(`${sets.length} Szenarien ausgewählt.`);
+  }
+
+  if (action === "clear-word-selection") {
+    state.selectedWordSets.clear();
+    state.includedWordIds.clear();
+    state.excludedWordIds.clear();
+    saveData();
+    refreshWordSelectionControls();
+    showToast("Wortauswahl geleert.");
   }
 
   if (action === "set-kanji-level") {
@@ -3786,6 +4038,7 @@ document.addEventListener("click", (event) => {
 
   if (action === "start-session") startSession(getItemsForSelection());
   if (action === "start-word-session") startWordSession();
+  if (action === "start-word-review") startWordReviewSession();
   if (action === "practice-hard-words") startHardWordSession();
   if (action === "retry-word-session" && state.lastResult?.kind === "words") {
     const words = state.lastResult.itemIds
@@ -3851,6 +4104,19 @@ document.addEventListener("click", (event) => {
       .filter(Boolean);
     startSession(items, "mistakes");
   }
+});
+
+document.addEventListener("input", (event) => {
+  if (!event.target.matches("#word-search")) return;
+  const query = event.target.value.trim().toLowerCase();
+  let visible = 0;
+  document.querySelectorAll("#individual-word-grid .individual-word").forEach((word) => {
+    const matches = !query || word.dataset.search.includes(query);
+    word.hidden = !matches;
+    if (matches) visible += 1;
+  });
+  const empty = document.querySelector("#word-search-empty");
+  if (empty) empty.hidden = visible > 0;
 });
 
 app.addEventListener("submit", (event) => {
