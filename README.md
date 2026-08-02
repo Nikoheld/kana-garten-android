@@ -15,7 +15,9 @@ Eine vollständige, offlinefähige Android-App zum Lesen, Verstehen und Sprechen
 - Hiragana und Katakana, frei kombinierbare Reihen und Eselsbrücken
 - 65 kombinierbare Alltagsszenarien mit 750+ Kana-Wörtern, Einzelwortauswahl und globalem Spaced-Repetition-Topf
 - einzelne Kanji und Kanji-Wörter von N5 bis N1
-- Gesprächstraining mit Tonhöhenmustern, Mora-Rhythmus, deutscher Übersetzung, Aufnahme und japanischer Sprachausgabe
+- 50 Gesprächssituationen in sieben Themenbereichen mit Rollenspiel, geführtem Sprechen und Shadowing
+- lokaler Aufnahmevergleich, natürliche Alternativantworten, Sinnabschnitt-Training, Mora-Rhythmus und ehrliche dreistufige Selbsteinschätzung
+- globaler Sprech-Wiederholungstopf unabhängig von der aktuellen Themen- und Levelauswahl
 - zeitbasiertes Spaced Repetition mit wachsenden Abständen von 4 Stunden bis 120 Tagen; unsichere Antworten kommen nach kurzer Zeit erneut
 - vollständig offline gebündelte Inhalte, Datensätze und Noto Sans JP
 - doppelte Fortschrittssicherung: Web-Speicher plus natives Android-Backup
