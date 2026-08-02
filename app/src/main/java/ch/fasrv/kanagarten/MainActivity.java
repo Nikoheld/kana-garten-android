@@ -413,7 +413,7 @@ public final class MainActivity extends Activity {
 
         LinearLayout offline = settingCard();
         offline.addView(label("✓  Vollständig offline", 17, palette.green, Typeface.BOLD));
-        offline.addView(label("Alle Kana, Wörter, Kanji, Gespräche, Eselsbrücken, Statistiken und Noto Sans JP sind im APK gespeichert. Nur die optionale Update-Prüfung benötigt Internet.", 12, palette.muted, Typeface.NORMAL), margins(0, 8, 0, 0));
+        offline.addView(label("Alle Kana, Wörter, Kanji, Grammatik, Gespräche, Eselsbrücken, Statistiken und Noto Sans JP sind im APK gespeichert. Nur die optionale Update-Prüfung benötigt Internet.", 12, palette.muted, Typeface.NORMAL), margins(0, 8, 0, 0));
         content.addView(offline, margins(0, 0, 0, 12));
 
         UsageStore.GoalSettings goalSettings = usageStore.goalSettings();
@@ -439,10 +439,16 @@ public final class MainActivity extends Activity {
         );
         dailyGoal.addView(goalMinutesLabel);
         SeekBar goalMinutes = new SeekBar(this);
-        goalMinutes.setMax(35);
-        goalMinutes.setProgress((goalSettings.dailyGoalMinutes - 5) / 5);
-        goalMinutes.setContentDescription("Tägliche Lernzeit in Fünf-Minuten-Schritten");
+        goalMinutes.setMax(DailyGoalScale.MAX_PROGRESS);
+        goalMinutes.setProgress(DailyGoalScale.progressForMinutes(goalSettings.dailyGoalMinutes));
+        goalMinutes.setContentDescription("Tägliche Lernzeit zwischen fünf Minuten und vierundzwanzig Stunden");
         dailyGoal.addView(goalMinutes, margins(0, 4, 0, 8));
+        dailyGoal.addView(label(
+            "5 Min · fein bis 3 Std · danach bis maximal 24 Std",
+            10,
+            palette.muted,
+            Typeface.NORMAL
+        ), margins(0, 0, 0, 10));
 
         Switch showDailyGoal = settingsSwitch(goalSettings.showDailyGoal, "Auf dem Hauptdashboard anzeigen");
         dailyGoal.addView(showDailyGoal, margins(0, 0, 0, 9));
@@ -460,11 +466,11 @@ public final class MainActivity extends Activity {
         });
         goalMinutes.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
-                goalMinutesLabel.setText(formatGoalMinutes(5 + progress * 5));
+                goalMinutesLabel.setText(formatGoalMinutes(DailyGoalScale.minutesForProgress(progress)));
             }
             @Override public void onStartTrackingTouch(SeekBar seekBar) {}
             @Override public void onStopTrackingTouch(SeekBar seekBar) {
-                usageStore.setDailyGoalMinutes(5 + seekBar.getProgress() * 5);
+                usageStore.setDailyGoalMinutes(DailyGoalScale.minutesForProgress(seekBar.getProgress()));
                 refreshGoalSurfaces();
             }
         });
@@ -498,7 +504,7 @@ public final class MainActivity extends Activity {
         jlptHeader.addView(jlptSwitch);
         jlpt.addView(jlptHeader);
         jlpt.addView(label(
-            "Zeigt den Weg zum nächsten Level von N5 bis N1 anhand deiner sicher gelernten Wörter, Kanji-Wörter, Kanji und Gespräche. Das ist eine App-Messung, keine offizielle Prüfungsprognose.",
+            "Zeigt den Weg zum nächsten Level von N5 bis N1 anhand deiner sicher gelernten Wörter, Kanji-Wörter, Kanji, Grammatik und Gespräche. Das ist eine App-Messung, keine offizielle Prüfungsprognose.",
             12,
             palette.muted,
             Typeface.NORMAL
@@ -690,7 +696,20 @@ public final class MainActivity extends Activity {
     }
 
     private String formatGoalMinutes(int minutes) {
-        return String.format(Locale.GERMANY, "Ziel: %d Minuten pro Tag", minutes);
+        if (minutes < 60) {
+            return String.format(Locale.GERMANY, "Ziel: %d Minuten pro Tag", minutes);
+        }
+        int hours = minutes / 60;
+        int rest = minutes % 60;
+        if (rest == 0) {
+            return String.format(
+                Locale.GERMANY,
+                "Ziel: %d %s pro Tag",
+                hours,
+                hours == 1 ? "Stunde" : "Stunden"
+            );
+        }
+        return String.format(Locale.GERMANY, "Ziel: %d Std. %d Min. pro Tag", hours, rest);
     }
 
     private String formatReminderTime(int hour, int minute) {

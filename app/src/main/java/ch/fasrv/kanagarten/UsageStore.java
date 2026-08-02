@@ -285,7 +285,7 @@ public final class UsageStore {
     }
 
     private int clampGoalMinutes(int minutes) {
-        return Math.max(5, Math.min(180, minutes));
+        return DailyGoalScale.clampMinutes(minutes);
     }
 
     private JlptProgress readJlptProgress() {
