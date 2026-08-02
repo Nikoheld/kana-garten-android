@@ -29,6 +29,7 @@ public final class UsageStore {
     private static final String DAILY_GOAL_REMINDER_MINUTE = "daily_goal_reminder_minute";
     private static final String SHOW_DAILY_GOAL = "show_daily_goal";
     private static final String SHOW_JLPT_PROGRESS = "show_jlpt_progress";
+    private static final String WORD_MASTERY_TARGET = "word_mastery_target";
     private static final DateTimeFormatter DATE = DateTimeFormatter.ISO_LOCAL_DATE;
 
     private final SharedPreferences preferences;
@@ -59,7 +60,20 @@ public final class UsageStore {
 
     public synchronized void backupProgress(String progressJson) {
         if (progressJson == null || progressJson.length() < 2) return;
-        preferences.edit().putString(PROGRESS, progressJson).apply();
+        SharedPreferences.Editor editor = preferences.edit().putString(PROGRESS, progressJson);
+        try {
+            JSONObject progress = new JSONObject(progressJson);
+            JSONObject settings = progress.optJSONObject("settings");
+            if (settings != null) {
+                editor.putInt(
+                    WORD_MASTERY_TARGET,
+                    clampWordMasteryTarget(settings.optInt("wordMasteryTarget", 3))
+                );
+            }
+        } catch (Exception ignored) {
+            // Das unveränderte Fortschritts-Backup bleibt auch bei beschädigten Settings erhalten.
+        }
+        editor.apply();
     }
 
     public synchronized String restoreProgress() {
@@ -103,6 +117,45 @@ public final class UsageStore {
 
     public synchronized void setShowJlptProgress(boolean show) {
         preferences.edit().putBoolean(SHOW_JLPT_PROGRESS, show).apply();
+    }
+
+    public synchronized int wordMasteryTarget() {
+        if (preferences.contains(WORD_MASTERY_TARGET)) {
+            return clampWordMasteryTarget(preferences.getInt(WORD_MASTERY_TARGET, 3));
+        }
+        String progressJson = restoreProgress();
+        if (!progressJson.isEmpty()) {
+            try {
+                JSONObject settings = new JSONObject(progressJson).optJSONObject("settings");
+                if (settings != null) {
+                    return clampWordMasteryTarget(settings.optInt("wordMasteryTarget", 3));
+                }
+            } catch (Exception ignored) {
+                // Bei beschädigtem Altbestand gilt der ausgewogene Standardwert.
+            }
+        }
+        return 3;
+    }
+
+    public synchronized void setWordMasteryTarget(int target) {
+        int clamped = clampWordMasteryTarget(target);
+        SharedPreferences.Editor editor = preferences.edit().putInt(WORD_MASTERY_TARGET, clamped);
+        String progressJson = restoreProgress();
+        if (!progressJson.isEmpty()) {
+            try {
+                JSONObject progress = new JSONObject(progressJson);
+                JSONObject settings = progress.optJSONObject("settings");
+                if (settings == null) {
+                    settings = new JSONObject();
+                    progress.put("settings", settings);
+                }
+                settings.put("wordMasteryTarget", clamped);
+                editor.putString(PROGRESS, progress.toString());
+            } catch (Exception ignored) {
+                // Der separate native Wert wird trotzdem sicher gespeichert.
+            }
+        }
+        editor.apply();
     }
 
     public synchronized String dashboardPreferencesJson() {
@@ -299,6 +352,10 @@ public final class UsageStore {
 
     private int clampGoalMinutes(int minutes) {
         return DailyGoalScale.clampMinutes(minutes);
+    }
+
+    private int clampWordMasteryTarget(int target) {
+        return Math.max(1, Math.min(20, target));
     }
 
     private JlptProgress readJlptProgress() {

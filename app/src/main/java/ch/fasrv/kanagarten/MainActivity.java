@@ -17,6 +17,7 @@ import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.GradientDrawable;
+import android.media.AudioAttributes;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Build;
@@ -70,6 +71,12 @@ public final class MainActivity extends Activity {
     private UsageStore usageStore;
     private TextToSpeech textToSpeech;
     private boolean japaneseSpeechReady;
+    private boolean speechInitializationFinished;
+    private boolean speechInstallDialogVisible;
+    private boolean speechSettingsOpened;
+    private String pendingSpeechText;
+    private double pendingSpeechRate = 0.9;
+    private TextView speechStatusLabel;
     private PermissionRequest pendingAudioPermission;
     private boolean learningActive;
     private int selectedTab;
@@ -418,6 +425,64 @@ public final class MainActivity extends Activity {
         offline.addView(label("Alle Kana, Wörter, Kanji, Grammatik, Gespräche, Eselsbrücken, Statistiken und Noto Sans JP sind im APK gespeichert. Nur die optionale Update-Prüfung benötigt Internet.", 12, palette.muted, Typeface.NORMAL), margins(0, 8, 0, 0));
         content.addView(offline, margins(0, 0, 0, 12));
 
+        LinearLayout mastery = settingCard();
+        mastery.addView(label("Wort-Festigung", 17, palette.ink, Typeface.BOLD));
+        mastery.addView(label(
+            "Bestimme, wie oft ein neues Kana- oder Kanji-Wort sicher richtig sein muss, bevor die Abstände deutlich länger werden.",
+            12,
+            palette.muted,
+            Typeface.NORMAL
+        ), margins(0, 7, 0, 12));
+        int currentMasteryTarget = usageStore.wordMasteryTarget();
+        TextView masteryValue = label(
+            formatWordMasteryTarget(currentMasteryTarget),
+            14,
+            palette.ink,
+            Typeface.BOLD
+        );
+        mastery.addView(masteryValue);
+        SeekBar masteryTarget = new SeekBar(this);
+        masteryTarget.setMax(19);
+        masteryTarget.setProgress(currentMasteryTarget - 1);
+        masteryTarget.setContentDescription("Benötigte sichere Wort-Treffer zwischen eins und zwanzig");
+        mastery.addView(masteryTarget, margins(0, 5, 0, 6));
+        LinearLayout masteryScale = new LinearLayout(this);
+        TextView quickScale = label("1 · Schnell", 10, palette.muted, Typeface.NORMAL);
+        TextView intensiveScale = label("Intensiv · 20", 10, palette.muted, Typeface.NORMAL);
+        intensiveScale.setGravity(Gravity.END);
+        masteryScale.addView(quickScale, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        masteryScale.addView(intensiveScale, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        mastery.addView(masteryScale);
+        masteryTarget.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                masteryValue.setText(formatWordMasteryTarget(progress + 1));
+            }
+            @Override public void onStartTrackingTouch(SeekBar seekBar) {}
+            @Override public void onStopTrackingTouch(SeekBar seekBar) {
+                int target = seekBar.getProgress() + 1;
+                usageStore.setWordMasteryTarget(target);
+                webView.evaluateJavascript(
+                    "window.dispatchEvent(new CustomEvent('kana-garten-word-mastery-change',{detail:" + target + "}))",
+                    null
+                );
+                Toast.makeText(
+                    MainActivity.this,
+                    "Wort-Festigung: " + target + " sichere Treffer",
+                    Toast.LENGTH_SHORT
+                ).show();
+            }
+        });
+        content.addView(mastery, margins(0, 0, 0, 12));
+
+        LinearLayout pronunciation = settingCard();
+        pronunciation.addView(label("Japanische Aussprache", 17, palette.ink, Typeface.BOLD));
+        speechStatusLabel = label(speechStatusText(), 12, palette.muted, Typeface.NORMAL);
+        pronunciation.addView(speechStatusLabel, margins(0, 7, 0, 13));
+        Button speechTest = actionButton("Stimme mit あ testen", palette.green);
+        speechTest.setOnClickListener(view -> speakJapanese("あ", 0.72));
+        pronunciation.addView(speechTest);
+        content.addView(pronunciation, margins(0, 0, 0, 12));
+
         UsageStore.GoalSettings goalSettings = usageStore.goalSettings();
         LinearLayout dailyGoal = settingCard();
         LinearLayout dailyHeader = new LinearLayout(this);
@@ -714,6 +779,22 @@ public final class MainActivity extends Activity {
         return String.format(Locale.GERMANY, "Ziel: %d Std. %d Min. pro Tag", hours, rest);
     }
 
+    private String formatWordMasteryTarget(int target) {
+        int clamped = Math.max(1, Math.min(20, target));
+        String profile;
+        if (clamped <= 3) profile = "Schnell";
+        else if (clamped <= 7) profile = "Ausgewogen";
+        else if (clamped <= 12) profile = "Gründlich";
+        else profile = "Intensiv";
+        return String.format(
+            Locale.GERMANY,
+            "%d sichere%s Treffer · %s",
+            clamped,
+            clamped == 1 ? "r" : "",
+            profile
+        );
+    }
+
     private String formatReminderTime(int hour, int minute) {
         return String.format(Locale.GERMANY, "Erinnerung um %02d:%02d Uhr", hour, minute);
     }
@@ -781,46 +862,119 @@ public final class MainActivity extends Activity {
     }
 
     private void initializeTextToSpeech() {
-        textToSpeech = new TextToSpeech(this, status -> {
-            if (status == TextToSpeech.SUCCESS) {
+        speechInitializationFinished = false;
+        japaneseSpeechReady = false;
+        textToSpeech = new TextToSpeech(this, status -> runOnUiThread(() -> {
+            if (status == TextToSpeech.SUCCESS && textToSpeech != null) {
                 int language = textToSpeech.setLanguage(Locale.JAPAN);
-                if (language == TextToSpeech.LANG_MISSING_DATA
-                    || language == TextToSpeech.LANG_NOT_SUPPORTED) {
-                    japaneseSpeechReady = false;
-                    return;
-                }
-                Voice bestOfflineVoice = null;
-                java.util.Set<Voice> voices = textToSpeech.getVoices();
-                if (voices != null) {
-                    for (Voice voice : voices) {
-                        if (!Locale.JAPAN.getLanguage().equals(voice.getLocale().getLanguage())
-                            || voice.isNetworkConnectionRequired()) {
-                            continue;
-                        }
-                        if (bestOfflineVoice == null || voice.getQuality() > bestOfflineVoice.getQuality()) {
-                            bestOfflineVoice = voice;
+                japaneseSpeechReady = language != TextToSpeech.LANG_MISSING_DATA
+                    && language != TextToSpeech.LANG_NOT_SUPPORTED;
+                if (japaneseSpeechReady) {
+                    Voice bestOfflineVoice = null;
+                    Voice bestJapaneseVoice = null;
+                    java.util.Set<Voice> voices = textToSpeech.getVoices();
+                    if (voices != null) {
+                        for (Voice voice : voices) {
+                            if (!Locale.JAPAN.getLanguage().equals(voice.getLocale().getLanguage())) {
+                                continue;
+                            }
+                            if (bestJapaneseVoice == null
+                                || voice.getQuality() > bestJapaneseVoice.getQuality()) {
+                                bestJapaneseVoice = voice;
+                            }
+                            if (!voice.isNetworkConnectionRequired()
+                                && (bestOfflineVoice == null
+                                    || voice.getQuality() > bestOfflineVoice.getQuality())) {
+                                bestOfflineVoice = voice;
+                            }
                         }
                     }
+                    Voice selectedVoice = bestOfflineVoice != null
+                        ? bestOfflineVoice
+                        : bestJapaneseVoice;
+                    if (selectedVoice != null) textToSpeech.setVoice(selectedVoice);
+                    textToSpeech.setAudioAttributes(new AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_ASSISTANCE_ACCESSIBILITY)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                        .build());
                 }
-                japaneseSpeechReady = bestOfflineVoice != null;
-                if (bestOfflineVoice != null) textToSpeech.setVoice(bestOfflineVoice);
             }
-        });
+            speechInitializationFinished = true;
+            refreshSpeechStatusLabel();
+            if (pendingSpeechText != null && japaneseSpeechReady) {
+                String text = pendingSpeechText;
+                double rate = pendingSpeechRate;
+                pendingSpeechText = null;
+                speakJapanese(text, rate);
+            }
+        }));
     }
 
     private void speakJapanese(String text, double rate) {
         runOnUiThread(() -> {
-            if (textToSpeech == null) {
+            String speech = text == null ? "" : text.trim();
+            if (speech.isEmpty()) return;
+            if (textToSpeech == null || !speechInitializationFinished) {
+                pendingSpeechText = speech;
+                pendingSpeechRate = rate;
                 Toast.makeText(this, "Die japanische Sprachausgabe wird vorbereitet.", Toast.LENGTH_SHORT).show();
                 return;
             }
             if (!japaneseSpeechReady) {
-                Toast.makeText(this, "Bitte installiere in Android einmalig die japanische Offline-Stimme.", Toast.LENGTH_LONG).show();
+                showSpeechInstallDialog();
                 return;
             }
             textToSpeech.setSpeechRate((float) Math.max(0.45, Math.min(1.1, rate)));
-            textToSpeech.speak(text, TextToSpeech.QUEUE_FLUSH, null, "kana-garten-ja");
+            int result = textToSpeech.speak(
+                speech,
+                TextToSpeech.QUEUE_FLUSH,
+                null,
+                "kana-garten-ja-" + System.currentTimeMillis()
+            );
+            if (result == TextToSpeech.ERROR) {
+                Toast.makeText(
+                    this,
+                    "Die Stimme konnte nicht starten. Prüfe bitte die Medienlautstärke oder die Android-Sprachausgabe.",
+                    Toast.LENGTH_LONG
+                ).show();
+            }
         });
+    }
+
+    private String speechStatusText() {
+        if (!speechInitializationFinished) {
+            return "Die japanische Systemstimme wird vorbereitet …";
+        }
+        if (japaneseSpeechReady) {
+            return "Bereit. Die Aussprachetaste funktioniert direkt auf jeder Kana-, Wort- und Kanji-Lernkarte.";
+        }
+        return "Auf diesem Gerät fehlt eine japanische Systemstimme. Beim Testen kannst du sie direkt installieren.";
+    }
+
+    private void refreshSpeechStatusLabel() {
+        if (speechStatusLabel != null) speechStatusLabel.setText(speechStatusText());
+    }
+
+    private void showSpeechInstallDialog() {
+        if (speechInstallDialogVisible || isFinishing()) return;
+        speechInstallDialogVisible = true;
+        new AlertDialog.Builder(
+            this,
+            palette.dark ? AlertDialog.THEME_DEVICE_DEFAULT_DARK : AlertDialog.THEME_DEVICE_DEFAULT_LIGHT
+        )
+            .setTitle("Japanische Stimme installieren")
+            .setMessage("Für die Aussprache fehlt Android noch eine japanische Stimme. Installiere sie einmalig in der System-Sprachausgabe; danach funktioniert sie auch offline.")
+            .setNegativeButton("Später", null)
+            .setPositiveButton("Stimmen öffnen", (dialog, which) -> {
+                speechSettingsOpened = true;
+                try {
+                    startActivity(new Intent(TextToSpeech.Engine.ACTION_INSTALL_TTS_DATA));
+                } catch (Exception ignored) {
+                    startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));
+                }
+            })
+            .setOnDismissListener(dialog -> speechInstallDialogVisible = false)
+            .show();
     }
 
     @Override
@@ -844,6 +998,11 @@ public final class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        if (speechSettingsOpened) {
+            speechSettingsOpened = false;
+            if (textToSpeech != null) textToSpeech.shutdown();
+            initializeTextToSpeech();
+        }
         StreakWidgetProvider.updateAll(this);
         ReviewReminderScheduler.scheduleFromProgress(this, usageStore.restoreProgress());
         DailyGoalScheduler.schedule(this);
@@ -910,6 +1069,11 @@ public final class MainActivity extends Activity {
         @JavascriptInterface
         public String restoreProgress() {
             return usageStore.restoreProgress();
+        }
+
+        @JavascriptInterface
+        public int getWordMasteryTarget() {
+            return usageStore.wordMasteryTarget();
         }
 
         @JavascriptInterface

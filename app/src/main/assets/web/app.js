@@ -493,6 +493,15 @@ let state = {
   lastResult: null,
   timer: null,
 };
+try {
+  if (window.Android?.getWordMasteryTarget) {
+    state.wordMasteryTarget = clampWordMasteryTarget(
+      window.Android.getWordMasteryTarget(),
+    );
+  }
+} catch {
+  // Im Browser bleibt der lokal gespeicherte Wert die Quelle.
+}
 let pendingConfirmation = null;
 let activeMediaRecorder = null;
 let activeMediaStream = null;
@@ -6460,6 +6469,12 @@ for (const dialog of document.querySelectorAll("dialog")) {
 
 saveData();
 window.addEventListener("kana-garten-dashboard-settings", () => {
+  if (state.view === "home") renderHome();
+});
+window.addEventListener("kana-garten-word-mastery-change", (event) => {
+  state.wordMasteryTarget = clampWordMasteryTarget(event.detail);
+  reconcileWordReviewEligibility();
+  saveData();
   if (state.view === "home") renderHome();
 });
 
