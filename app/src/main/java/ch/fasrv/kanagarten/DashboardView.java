@@ -42,7 +42,7 @@ public final class DashboardView extends ScrollView {
         setClipToPadding(false);
         content = new LinearLayout(context);
         content.setOrientation(LinearLayout.VERTICAL);
-        content.setPadding(dp(18), dp(24), dp(18), dp(110));
+        content.setPadding(dp(18), dp(22), dp(18), dp(32));
         addView(content, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT));
         refresh();
     }

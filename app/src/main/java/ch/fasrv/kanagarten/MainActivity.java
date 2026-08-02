@@ -19,7 +19,12 @@ import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Build;
+import android.provider.Settings;
 import android.speech.tts.TextToSpeech;
+import android.text.SpannableString;
+import android.text.Spanned;
+import android.text.style.AbsoluteSizeSpan;
+import android.text.style.StyleSpan;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -44,6 +49,10 @@ import java.util.Locale;
 
 public final class MainActivity extends Activity {
     private static final int REQUEST_AUDIO = 801;
+    private static final int REQUEST_NOTIFICATIONS = 802;
+    private static final String REMINDER_UI_PREFS = "kana_garten_reminder_ui";
+    private static final String REMINDER_PROMPTED = "permission_prompted";
+    private static final int NAVIGATION_HEIGHT_DP = 78;
 
     private final List<TextView> navigationButtons = new ArrayList<>();
     private AppPalette palette;
@@ -77,6 +86,7 @@ public final class MainActivity extends Activity {
         Window window = getWindow();
         configureSystemBars(window);
         UpdateManager.initialize(this);
+        ReviewReminderScheduler.initialize(this);
 
         usageStore = new UsageStore(this);
         initializeTextToSpeech();
@@ -108,7 +118,7 @@ public final class MainActivity extends Activity {
         bottomNavigation = buildBottomNavigation();
         rootView.addView(bottomNavigation, new LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
-            dp(72)
+            dp(NAVIGATION_HEIGHT_DP)
         ));
         setContentView(rootView);
         rootView.requestApplyInsets();
@@ -210,6 +220,15 @@ public final class MainActivity extends Activity {
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQUEST_NOTIFICATIONS) {
+            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                ReviewReminderScheduler.scheduleFromProgress(this, usageStore.restoreProgress());
+                Toast.makeText(this, "Lern-Erinnerungen sind aktiv.", Toast.LENGTH_SHORT).show();
+            } else {
+                Toast.makeText(this, "Du kannst Erinnerungen später unter Einstellungen aktivieren.", Toast.LENGTH_LONG).show();
+            }
+            return;
+        }
         if (requestCode != REQUEST_AUDIO || pendingAudioPermission == null) return;
         if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
             pendingAudioPermission.grant(new String[]{PermissionRequest.RESOURCE_AUDIO_CAPTURE});
@@ -222,19 +241,19 @@ public final class MainActivity extends Activity {
 
     private View buildBottomNavigation() {
         FrameLayout area = new FrameLayout(this);
-        area.setPadding(dp(12), dp(5), dp(12), dp(7));
+        area.setPadding(dp(10), dp(4), dp(10), dp(8));
         area.setBackgroundColor(palette.paper);
 
         LinearLayout dock = new LinearLayout(this);
         dock.setGravity(Gravity.CENTER);
-        dock.setPadding(dp(5), dp(5), dp(5), dp(5));
-        GradientDrawable dockBackground = rounded(palette.paperLight, 22);
+        dock.setPadding(dp(4), dp(4), dp(4), dp(4));
+        GradientDrawable dockBackground = rounded(palette.paperLight, 20);
         dockBackground.setStroke(dp(1), palette.line);
         dock.setBackground(dockBackground);
         dock.setElevation(dp(12));
         dock.addView(navigationButton("あ", "Lernen", 0), weighted());
-        dock.addView(navigationButton("▥", "Aktivität", 1), weighted());
-        dock.addView(navigationButton("⚙", "Mehr", 2), weighted());
+        dock.addView(navigationButton("▥", "Fortschritt", 1), weighted());
+        dock.addView(navigationButton("⚙", "Einstellungen", 2), weighted());
         area.addView(dock, new FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.MATCH_PARENT
@@ -242,15 +261,28 @@ public final class MainActivity extends Activity {
         return area;
     }
 
-    @SuppressLint("SetTextI18n")
     private TextView navigationButton(String icon, String label, int index) {
         TextView button = new TextView(this);
-        button.setText(icon + "  " + label);
-        button.setTextSize(12);
+        SpannableString content = new SpannableString(icon + "\n" + label);
+        content.setSpan(
+            new AbsoluteSizeSpan(20, true),
+            0,
+            icon.length(),
+            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+        );
+        content.setSpan(
+            new StyleSpan(Typeface.BOLD),
+            0,
+            icon.length(),
+            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+        );
+        button.setText(content);
+        button.setTextSize(10);
         button.setTypeface(Typeface.create("sans", Typeface.BOLD));
         button.setGravity(Gravity.CENTER);
-        button.setLetterSpacing(0.015f);
-        button.setPadding(dp(4), 0, dp(4), 0);
+        button.setLineSpacing(dp(1), 0.94f);
+        button.setLetterSpacing(0.01f);
+        button.setPadding(dp(4), dp(3), dp(4), dp(2));
         button.setContentDescription(label);
         button.setOnClickListener(view -> {
             view.animate().scaleX(0.96f).scaleY(0.96f).setDuration(70).withEndAction(() ->
@@ -296,8 +328,8 @@ public final class MainActivity extends Activity {
                 ? (palette.dark ? palette.paper : Color.WHITE)
                 : palette.muted);
             button.setBackground(selected
-                ? rounded(palette.ink, 17)
-                : rounded(Color.TRANSPARENT, 17));
+                ? rounded(palette.ink, 15)
+                : rounded(Color.TRANSPARENT, 15));
             button.setAlpha(selected ? 1f : 0.86f);
             button.setSelected(selected);
         }
@@ -351,7 +383,7 @@ public final class MainActivity extends Activity {
         if (learningActive) bottomNavigation.setVisibility(View.GONE);
         rootView.addView(bottomNavigation, new LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
-            dp(72)
+            dp(NAVIGATION_HEIGHT_DP)
         ));
         updateNavigationAppearance();
         StreakWidgetProvider.updateAll(this);
@@ -363,7 +395,7 @@ public final class MainActivity extends Activity {
         scroll.setBackgroundColor(palette.paper);
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
-        content.setPadding(dp(20), dp(28), dp(20), dp(110));
+        content.setPadding(dp(18), dp(22), dp(18), dp(32));
         scroll.addView(content);
 
         TextView eyebrow = label("APP & OFFLINE", 10, palette.red, Typeface.BOLD);
@@ -378,6 +410,49 @@ public final class MainActivity extends Activity {
         offline.addView(label("✓  Vollständig offline", 17, palette.green, Typeface.BOLD));
         offline.addView(label("Alle Kana, Wörter, Kanji, Gespräche, Eselsbrücken, Statistiken und Noto Sans JP sind im APK gespeichert. Nur die optionale Update-Prüfung benötigt Internet.", 12, palette.muted, Typeface.NORMAL), margins(0, 8, 0, 0));
         content.addView(offline, margins(0, 0, 0, 12));
+
+        LinearLayout reminders = settingCard();
+        boolean notificationsAllowed = ReviewReminderScheduler.areNotificationsAllowed(this);
+        reminders.addView(label(
+            notificationsAllowed ? "✓  Lern-Erinnerungen aktiv" : "Lern-Erinnerungen",
+            17,
+            notificationsAllowed ? palette.green : palette.ink,
+            Typeface.BOLD
+        ));
+        reminders.addView(label(
+            "Die App meldet sich, sobald Kana, Wörter, Kanji oder Gespräche fällig werden. Jede sichere Wiederholung vergrößert den nächsten Abstand.",
+            12,
+            palette.muted,
+            Typeface.NORMAL
+        ), margins(0, 8, 0, 13));
+        Button reminderButton = actionButton(
+            notificationsAllowed ? "Benachrichtigungen verwalten" : "Erinnerungen aktivieren",
+            notificationsAllowed ? palette.ink : palette.red
+        );
+        reminderButton.setOnClickListener(view -> enableOrOpenReviewNotifications());
+        reminders.addView(reminderButton);
+        content.addView(reminders, margins(0, 0, 0, 12));
+
+        LinearLayout appearance = settingCard();
+        appearance.addView(label("Darstellung", 17, palette.ink, Typeface.BOLD));
+        appearance.addView(label(
+            palette.dark ? "Der Dunkelmodus ist in der gesamten App aktiv." : "Der helle Papiermodus ist in der gesamten App aktiv.",
+            12,
+            palette.muted,
+            Typeface.NORMAL
+        ), margins(0, 7, 0, 13));
+        Button appearanceButton = actionButton(
+            palette.dark ? "Hellen Modus verwenden" : "Dunkelmodus verwenden",
+            palette.ink
+        );
+        appearanceButton.setOnClickListener(view ->
+            webView.evaluateJavascript(
+                "document.querySelector('[data-action=\"toggle-theme\"]')?.click()",
+                null
+            )
+        );
+        appearance.addView(appearanceButton);
+        content.addView(appearance, margins(0, 0, 0, 12));
 
         LinearLayout update = settingCard();
         update.addView(label("App-Updates", 17, palette.ink, Typeface.BOLD));
@@ -440,6 +515,53 @@ public final class MainActivity extends Activity {
             PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
         );
         manager.requestPinAppWidget(provider, null, success);
+    }
+
+    private void maybeRequestReviewNotificationPermission() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU
+            || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                == PackageManager.PERMISSION_GRANTED) {
+            return;
+        }
+        android.content.SharedPreferences preferences = getSharedPreferences(
+            REMINDER_UI_PREFS,
+            Context.MODE_PRIVATE
+        );
+        if (preferences.getBoolean(REMINDER_PROMPTED, false)) return;
+        preferences.edit().putBoolean(REMINDER_PROMPTED, true).apply();
+        new AlertDialog.Builder(
+            this,
+            palette.dark ? AlertDialog.THEME_DEVICE_DEFAULT_DARK : AlertDialog.THEME_DEVICE_DEFAULT_LIGHT
+        )
+            .setTitle("Wissen rechtzeitig auffrischen")
+            .setMessage("Kana Garten kann dich benachrichtigen, sobald eine kurze Wiederholung fällig ist. Die Abstände werden mit jedem sicheren Treffer länger.")
+            .setNegativeButton("Später", null)
+            .setPositiveButton("Erinnerungen aktivieren", (dialog, which) ->
+                requestPermissions(
+                    new String[]{Manifest.permission.POST_NOTIFICATIONS},
+                    REQUEST_NOTIFICATIONS
+                )
+            )
+            .show();
+    }
+
+    private void enableOrOpenReviewNotifications() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+            && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(
+                new String[]{Manifest.permission.POST_NOTIFICATIONS},
+                REQUEST_NOTIFICATIONS
+            );
+            return;
+        }
+        try {
+            startActivity(ReviewReminderScheduler.notificationSettingsIntent(this));
+        } catch (Exception ignored) {
+            Intent intent = new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                .putExtra(Settings.EXTRA_APP_PACKAGE, getPackageName());
+            startActivity(intent);
+        }
     }
 
     private LinearLayout settingCard() {
@@ -547,6 +669,7 @@ public final class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         StreakWidgetProvider.updateAll(this);
+        ReviewReminderScheduler.scheduleFromProgress(this, usageStore.restoreProgress());
         UpdateManager.tryInstallPending(this, false);
     }
 
@@ -555,6 +678,7 @@ public final class MainActivity extends Activity {
         super.onNewIntent(intent);
         setIntent(intent);
         if (intent.getBooleanExtra("open_dashboard", false)) selectTab(1, true);
+        else if (intent.getBooleanExtra("open_reviews", false)) selectTab(0, true);
     }
 
     @Override
@@ -585,12 +709,14 @@ public final class MainActivity extends Activity {
             runOnUiThread(() -> {
                 StreakWidgetProvider.updateAll(MainActivity.this);
                 if (dashboardView != null) dashboardView.refresh();
+                maybeRequestReviewNotificationPermission();
             });
         }
 
         @JavascriptInterface
         public void backupProgress(String json) {
             usageStore.backupProgress(json);
+            ReviewReminderScheduler.scheduleFromProgress(MainActivity.this, json);
         }
 
         @JavascriptInterface
