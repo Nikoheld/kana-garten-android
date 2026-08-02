@@ -36,7 +36,7 @@ public final class LocalContentWebViewClient extends WebViewClient {
             headers.put("Access-Control-Allow-Origin", APP_ORIGIN);
             return new WebResourceResponse(
                 mimeType(path),
-                path.endsWith(".ttf") ? null : "UTF-8",
+                isBinary(path) ? null : "UTF-8",
                 200,
                 "OK",
                 headers,
@@ -84,7 +84,14 @@ public final class LocalContentWebViewClient extends WebViewClient {
         if (path.endsWith(".json")) return "application/json";
         if (path.endsWith(".svg")) return "image/svg+xml";
         if (path.endsWith(".png")) return "image/png";
+        if (path.endsWith(".mp3")) return "audio/mpeg";
         if (path.endsWith(".ttf")) return "font/ttf";
         return "application/octet-stream";
+    }
+
+    private boolean isBinary(String path) {
+        return path.endsWith(".ttf")
+            || path.endsWith(".png")
+            || path.endsWith(".mp3");
     }
 }

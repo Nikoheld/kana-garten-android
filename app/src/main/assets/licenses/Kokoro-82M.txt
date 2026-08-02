@@ -1,0 +1,8 @@
+Japanese pronunciation audio generation
+
+The bundled Kana, vocabulary and Kanji-reading MP3 files were generated with
+hexgrad/Kokoro-82M using the jf_alpha Japanese voice. Kokoro-82M is distributed
+under the Apache License 2.0. The model itself is not distributed in this APK.
+
+Project: https://huggingface.co/hexgrad/Kokoro-82M
+License: https://www.apache.org/licenses/LICENSE-2.0

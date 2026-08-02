@@ -17,7 +17,9 @@ import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.GradientDrawable;
+import android.content.res.AssetFileDescriptor;
 import android.media.AudioAttributes;
+import android.media.MediaPlayer;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Build;
@@ -58,6 +60,7 @@ public final class MainActivity extends Activity {
     private static final String REMINDER_UI_PREFS = "kana_garten_reminder_ui";
     private static final String REMINDER_PROMPTED = "permission_prompted";
     private static final int NAVIGATION_HEIGHT_DP = 78;
+    private static final String BUNDLED_A_AUDIO = "/audio/pronunciation/dc5a4d3d82f7.mp3";
 
     private final List<TextView> navigationButtons = new ArrayList<>();
     private AppPalette palette;
@@ -70,6 +73,7 @@ public final class MainActivity extends Activity {
     private View currentView;
     private UsageStore usageStore;
     private TextToSpeech textToSpeech;
+    private MediaPlayer pronunciationPlayer;
     private boolean japaneseSpeechReady;
     private boolean speechInitializationFinished;
     private boolean speechInstallDialogVisible;
@@ -478,8 +482,8 @@ public final class MainActivity extends Activity {
         pronunciation.addView(label("Japanische Aussprache", 17, palette.ink, Typeface.BOLD));
         speechStatusLabel = label(speechStatusText(), 12, palette.muted, Typeface.NORMAL);
         pronunciation.addView(speechStatusLabel, margins(0, 7, 0, 13));
-        Button speechTest = actionButton("Stimme mit あ testen", palette.green);
-        speechTest.setOnClickListener(view -> speakJapanese("あ", 0.72));
+        Button speechTest = actionButton("Mitgeliefertes Audio mit あ testen", palette.green);
+        speechTest.setOnClickListener(view -> playBundledPronunciation(BUNDLED_A_AUDIO));
         pronunciation.addView(speechTest);
         content.addView(pronunciation, margins(0, 0, 0, 12));
 
@@ -912,6 +916,7 @@ public final class MainActivity extends Activity {
 
     private void speakJapanese(String text, double rate) {
         runOnUiThread(() -> {
+            stopBundledPronunciation();
             String speech = text == null ? "" : text.trim();
             if (speech.isEmpty()) return;
             if (textToSpeech == null || !speechInitializationFinished) {
@@ -941,14 +946,77 @@ public final class MainActivity extends Activity {
         });
     }
 
+    private void playBundledPronunciation(String assetPath) {
+        runOnUiThread(() -> {
+            String normalized = assetPath == null
+                ? ""
+                : assetPath.replaceFirst("^/+", "");
+            if (!normalized.matches("audio/pronunciation/[a-f0-9]{12}\\.mp3")) {
+                Toast.makeText(this, "Die Audiodatei ist ungültig.", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            stopBundledPronunciation();
+            if (textToSpeech != null && japaneseSpeechReady) textToSpeech.stop();
+            try {
+                AssetFileDescriptor descriptor = getAssets().openFd("web/" + normalized);
+                MediaPlayer player = new MediaPlayer();
+                pronunciationPlayer = player;
+                player.setAudioAttributes(new AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_ASSISTANCE_ACCESSIBILITY)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build());
+                player.setDataSource(
+                    descriptor.getFileDescriptor(),
+                    descriptor.getStartOffset(),
+                    descriptor.getLength()
+                );
+                descriptor.close();
+                player.setOnPreparedListener(MediaPlayer::start);
+                player.setOnCompletionListener(completed -> {
+                    if (pronunciationPlayer == completed) pronunciationPlayer = null;
+                    completed.release();
+                });
+                player.setOnErrorListener((failed, what, extra) -> {
+                    if (pronunciationPlayer == failed) pronunciationPlayer = null;
+                    failed.release();
+                    Toast.makeText(
+                        this,
+                        "Das mitgelieferte Kana-Audio konnte nicht abgespielt werden.",
+                        Toast.LENGTH_LONG
+                    ).show();
+                    return true;
+                });
+                player.prepareAsync();
+            } catch (Exception error) {
+                stopBundledPronunciation();
+                Toast.makeText(
+                    this,
+                    "Das mitgelieferte Kana-Audio fehlt. Bitte installiere das App-Update erneut.",
+                    Toast.LENGTH_LONG
+                ).show();
+            }
+        });
+    }
+
+    private void stopBundledPronunciation() {
+        if (pronunciationPlayer == null) return;
+        try {
+            pronunciationPlayer.stop();
+        } catch (Exception ignored) {
+            // Ein noch nicht vorbereiteter Player wird direkt freigegeben.
+        }
+        pronunciationPlayer.release();
+        pronunciationPlayer = null;
+    }
+
     private String speechStatusText() {
         if (!speechInitializationFinished) {
-            return "Die japanische Systemstimme wird vorbereitet …";
+            return "Alle Kana sowie alle normalen Wort- und Kanji-Lernkarten haben fest mitgeliefertes Offline-Audio. Die Systemstimme für vollständige Sätze wird vorbereitet …";
         }
         if (japaneseSpeechReady) {
-            return "Bereit. Die Aussprachetaste funktioniert direkt auf jeder Kana-, Wort- und Kanji-Lernkarte.";
+            return "Bereit. Kana, Wörter und Kanji-Lesungen kommen garantiert aus dem APK; für vollständige Sätze ist zusätzlich die japanische Systemstimme aktiv.";
         }
-        return "Auf diesem Gerät fehlt eine japanische Systemstimme. Beim Testen kannst du sie direkt installieren.";
+        return "Kana, Wörter und Kanji-Lesungen funktionieren ohne Systemstimme direkt aus dem APK. Nur für vollständige Sätze kannst du zusätzlich eine japanische Android-Stimme installieren.";
     }
 
     private void refreshSpeechStatusLabel() {
@@ -1030,6 +1098,7 @@ public final class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        stopBundledPronunciation();
         if (textToSpeech != null) {
             textToSpeech.stop();
             textToSpeech.shutdown();
@@ -1079,6 +1148,11 @@ public final class MainActivity extends Activity {
         @JavascriptInterface
         public void speakJapanese(String text, double rate) {
             MainActivity.this.speakJapanese(text, rate);
+        }
+
+        @JavascriptInterface
+        public void playBundledPronunciation(String assetPath) {
+            MainActivity.this.playBundledPronunciation(assetPath);
         }
 
         @JavascriptInterface
