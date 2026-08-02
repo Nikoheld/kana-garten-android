@@ -45,6 +45,10 @@
             android:exported="false" />
 
         <receiver
+            android:name=".DailyGoalReceiver"
+            android:exported="false" />
+
+        <receiver
             android:name=".ReviewBootReceiver"
             android:enabled="true"
             android:exported="true">

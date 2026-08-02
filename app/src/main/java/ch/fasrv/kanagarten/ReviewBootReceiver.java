@@ -11,6 +11,7 @@ public final class ReviewBootReceiver extends BroadcastReceiver {
         if (Intent.ACTION_BOOT_COMPLETED.equals(action)
             || Intent.ACTION_MY_PACKAGE_REPLACED.equals(action)) {
             ReviewReminderScheduler.initialize(context);
+            DailyGoalScheduler.initialize(context);
         }
     }
 }

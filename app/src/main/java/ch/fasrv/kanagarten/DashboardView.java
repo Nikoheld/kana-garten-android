@@ -62,6 +62,10 @@ public final class DashboardView extends ScrollView {
         addSubtitle("Jede abgeschlossene Runde wird lokal erfasst. So siehst du nicht nur, was du gelernt hast, sondern auch wann und wie lange.");
         addStreakHero(snapshot);
         addStatCards(snapshot);
+        if (snapshot.goalSettings.dailyGoalEnabled && snapshot.goalSettings.showDailyGoal) {
+            addDailyGoal(snapshot);
+        }
+        if (snapshot.goalSettings.showJlptProgress) addJlptProgress(snapshot.jlptProgress);
         addSectionTitle("Die letzten 14 Tage", "Minuten pro Lerntag");
         ActivityChart chart = new ActivityChart(getContext(), snapshot.days);
         content.addView(chart, marginParams(LayoutParams.MATCH_PARENT, dp(210), 0, 12, 0, 24));
@@ -126,6 +130,79 @@ public final class DashboardView extends ScrollView {
         caption.setPadding(0, dp(5), 0, 0);
         card.addView(caption);
         return card;
+    }
+
+    private void addDailyGoal(UsageStore.Snapshot snapshot) {
+        int targetSeconds = snapshot.goalSettings.dailyGoalMinutes * 60;
+        float ratio = targetSeconds == 0 ? 0f : snapshot.todaySeconds / (float) targetSeconds;
+        int learnedMinutes = Math.round(snapshot.todaySeconds / 60f);
+        int remainingMinutes = Math.max(0, (int) Math.ceil((targetSeconds - snapshot.todaySeconds) / 60d));
+
+        addSectionTitle("Dein Tagesziel", snapshot.goalSettings.dailyGoalMinutes + " Minuten");
+        LinearLayout card = verticalCard();
+        LinearLayout row = new LinearLayout(getContext());
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.addView(text(
+            learnedMinutes + " / " + snapshot.goalSettings.dailyGoalMinutes + " Min",
+            23,
+            palette.ink,
+            Typeface.BOLD
+        ), new LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f));
+        row.addView(text(Math.min(100, Math.round(ratio * 100)) + "%", 12, palette.green, Typeface.BOLD));
+        card.addView(row);
+        addProgressTrack(card, ratio, palette.green);
+
+        String detail;
+        if (ratio >= 1f) {
+            int extra = Math.max(0, learnedMinutes - snapshot.goalSettings.dailyGoalMinutes);
+            detail = extra > 0
+                ? "Ziel erreicht · " + extra + " Minuten freiwillig darüber. Weiterlernen ist jederzeit möglich."
+                : "Ziel erreicht. Weiterlernen ist jederzeit möglich.";
+        } else {
+            detail = remainingMinutes + (remainingMinutes == 1 ? " Minute fehlt" : " Minuten fehlen")
+                + " noch. Die Erinnerung kommt um "
+                + String.format(java.util.Locale.GERMANY, "%02d:%02d", snapshot.goalSettings.reminderHour, snapshot.goalSettings.reminderMinute)
+                + " Uhr.";
+        }
+        card.addView(text(detail, 11, ratio >= 1f ? palette.green : palette.muted, Typeface.BOLD));
+        content.addView(card, marginParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT, 0, 8, 0, 24));
+    }
+
+    private void addJlptProgress(UsageStore.JlptProgress progress) {
+        addSectionTitle("Nächstes JLPT-Ziel", progress.target);
+        LinearLayout card = verticalCard();
+        LinearLayout row = new LinearLayout(getContext());
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        String title = progress.complete ? "App-Pfad abgeschlossen" : "Auf dem Weg zu JLPT " + progress.target;
+        row.addView(text(title, 16, palette.ink, Typeface.BOLD), new LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f));
+        row.addView(text(progress.percent + "%", 18, palette.red, Typeface.BOLD));
+        card.addView(row);
+        addProgressTrack(card, progress.percent / 100f, palette.red);
+        String count = progress.total > 0
+            ? progress.learned + " von " + progress.total + " Inhalten sicher gelernt. "
+            : "Beginne mit N5-Inhalten. ";
+        card.addView(text(
+            count + "Die Leiste misst deinen App-Lernstand und ist keine offizielle Prüfungsprognose.",
+            10,
+            palette.muted,
+            Typeface.NORMAL
+        ));
+        content.addView(card, marginParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT, 0, 8, 0, 24));
+    }
+
+    private void addProgressTrack(LinearLayout card, float progress, int color) {
+        float clamped = Math.max(0f, Math.min(1f, progress));
+        LinearLayout track = new LinearLayout(getContext());
+        track.setBackground(rounded(palette.track, 0, 0, 99));
+        if (clamped > 0f) {
+            View fill = new View(getContext());
+            fill.setBackground(rounded(color, 0, 0, 99));
+            track.addView(fill, new LinearLayout.LayoutParams(0, dp(10), clamped));
+        }
+        if (clamped < 1f) {
+            track.addView(new View(getContext()), new LinearLayout.LayoutParams(0, dp(10), 1f - clamped));
+        }
+        card.addView(track, marginParams(LayoutParams.MATCH_PARENT, dp(10), 0, 12, 0, 11));
     }
 
     private void addModeBreakdown(Map<String, Integer> modeSeconds, int totalSeconds) {
