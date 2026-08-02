@@ -1,6 +1,6 @@
 <resources>
     <string name="app_name">Kana Garten</string>
-    <string name="widget_description">Dein Kana-Garten-Streak mit Hibi</string>
+    <string name="widget_description">Hibi zeigt deinen Streak, dein Tagesziel und fällige Wiederholungen</string>
     <string name="hibi_description">Hibi, das Kana-Garten-Maskottchen</string>
     <string name="widget_streak_label">DEIN STREAK</string>
     <string name="widget_streak_empty">0 Tage</string>

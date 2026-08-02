@@ -577,7 +577,7 @@ public final class MainActivity extends Activity {
         widgetCopy.setOrientation(LinearLayout.VERTICAL);
         widgetCopy.setPadding(dp(12), 0, 0, 0);
         widgetCopy.addView(label("Hibi-Streak-Widget", 17, palette.ink, Typeface.BOLD));
-        widgetCopy.addView(label("Hibi wird immer wütender, je näher Mitternacht kommt.", 11, palette.muted, Typeface.NORMAL));
+        widgetCopy.addView(label("Vier responsive Größen: Hibi zeigt Streak, Tagesziel und fällige Wiederholungen – und wird bis Mitternacht immer wütender.", 11, palette.muted, Typeface.NORMAL));
         widgetHeader.addView(widgetCopy, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         widget.addView(widgetHeader);
         Button widgetButton = actionButton("Widget zum Startbildschirm", palette.ink);

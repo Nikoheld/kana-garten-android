@@ -1,0 +1,74 @@
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/widget_background_worried"
+    android:padding="6dp">
+
+    <ImageView
+        android:id="@+id/widget_mascot"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_gravity="center"
+        android:layout_margin="8dp"
+        android:contentDescription="@string/hibi_description"
+        android:scaleType="centerInside"
+        android:src="@drawable/hibi_happy_widget" />
+
+    <TextView
+        android:id="@+id/widget_message"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|center_horizontal"
+        android:background="@drawable/widget_message_background"
+        android:ellipsize="end"
+        android:fontFamily="sans-serif"
+        android:includeFontPadding="false"
+        android:maxLines="1"
+        android:paddingStart="7dp"
+        android:paddingTop="3dp"
+        android:paddingEnd="7dp"
+        android:paddingBottom="3dp"
+        android:text="Heute lernen"
+        android:textColor="#D94A36"
+        android:textSize="8sp"
+        android:textStyle="bold" />
+
+    <LinearLayout
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|center_horizontal"
+        android:background="@drawable/widget_streak_badge"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="9dp"
+        android:paddingTop="4dp"
+        android:paddingEnd="9dp"
+        android:paddingBottom="4dp">
+
+        <TextView
+            android:id="@+id/widget_streak"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:fontFamily="sans-serif"
+            android:includeFontPadding="false"
+            android:maxLines="1"
+            android:text="🔥 0"
+            android:textColor="#FFFFFF"
+            android:textSize="20sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/widget_label"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="4dp"
+            android:fontFamily="sans-serif"
+            android:includeFontPadding="false"
+            android:letterSpacing="0.08"
+            android:text="DEIN STREAK"
+            android:textColor="#FFFFFF"
+            android:textSize="7sp"
+            android:textStyle="bold" />
+    </LinearLayout>
+</FrameLayout>
