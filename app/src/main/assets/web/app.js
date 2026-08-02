@@ -593,6 +593,7 @@ function saveData() {
   const serialized = JSON.stringify(data);
   localStorage.setItem(STORAGE_KEY, serialized);
   window.Android?.backupProgress?.(serialized);
+  window.Android?.backupJlptProgress?.(JSON.stringify(getJlptProgress()));
 }
 
 function notifyAndroidSession(kind, durationSeconds, itemCount) {
@@ -1339,6 +1340,96 @@ function getReviewOverview() {
   };
 }
 
+function getJlptProgress() {
+  const levels = ["N5", "N4", "N3", "N2", "N1"];
+  const domains = [
+    { items: VOCABULARY, stats: data.words },
+    { items: KANJI_VOCABULARY, stats: data.kanjiWords },
+    { items: KANJI, stats: data.kanji },
+    { items: CONVERSATIONS, stats: data.conversations },
+  ];
+  const calculate = (targetIndex) => {
+    const domainResults = domains.map(({ items, stats }) => {
+      const eligible = items.filter((item) => item.levelIndex <= targetIndex);
+      const learned = eligible.filter(
+        (item) => Number(stats[item.id]?.strength || 0) >= 3,
+      ).length;
+      return {
+        learned,
+        total: eligible.length,
+        ratio: eligible.length ? learned / eligible.length : 0,
+      };
+    });
+    const average =
+      domainResults.reduce((sum, domain) => sum + domain.ratio, 0) /
+      domainResults.length;
+    return {
+      target: levels[targetIndex],
+      percent: Math.round(average * 100),
+      learned: domainResults.reduce((sum, domain) => sum + domain.learned, 0),
+      total: domainResults.reduce((sum, domain) => sum + domain.total, 0),
+      complete: false,
+    };
+  };
+
+  for (let targetIndex = 0; targetIndex < levels.length; targetIndex += 1) {
+    const result = calculate(targetIndex);
+    if (result.percent < 100) return result;
+  }
+  return { ...calculate(levels.length - 1), complete: true };
+}
+
+function getAndroidDashboardPreferences() {
+  if (!window.Android?.getDashboardPreferences) return null;
+  try {
+    return JSON.parse(window.Android.getDashboardPreferences());
+  } catch {
+    return null;
+  }
+}
+
+function renderOptionalGoalDashboard() {
+  const preferences = getAndroidDashboardPreferences();
+  const jlpt = getJlptProgress();
+  window.Android?.backupJlptProgress?.(JSON.stringify(jlpt));
+  if (!preferences) return "";
+
+  const cards = [];
+  if (preferences.dailyGoalEnabled && preferences.showDailyGoal) {
+    const goalMinutes = Math.max(5, Number(preferences.dailyGoalMinutes || 20));
+    const learnedSeconds = Math.max(0, Number(preferences.todaySeconds || 0));
+    const learnedMinutes = Math.round(learnedSeconds / 60);
+    const targetSeconds = goalMinutes * 60;
+    const percentage = Math.min(100, Math.round((learnedSeconds / targetSeconds) * 100));
+    const remaining = Math.max(0, Math.ceil((targetSeconds - learnedSeconds) / 60));
+    const extra = Math.max(0, Math.floor((learnedSeconds - targetSeconds) / 60));
+    const status = learnedSeconds >= targetSeconds
+      ? extra
+        ? `Ziel erreicht · ${extra} Min darüber`
+        : "Tagesziel erreicht"
+      : `${remaining} ${remaining === 1 ? "Minute fehlt" : "Minuten fehlen"}`;
+    cards.push(`
+      <article class="optional-goal-card daily-goal-card">
+        <div class="optional-goal-heading"><span>Tagesziel</span><strong>${learnedMinutes} / ${goalMinutes} Min</strong></div>
+        <div class="optional-progress" role="progressbar" aria-label="Tägliches Lernzeitziel" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percentage}"><i style="--goal-progress: ${percentage}%"></i></div>
+        <small>${status}. Du kannst unbegrenzt weiterlernen.</small>
+      </article>
+    `);
+  }
+  if (preferences.showJlptProgress) {
+    cards.push(`
+      <article class="optional-goal-card jlpt-goal-card">
+        <div class="optional-goal-heading"><span>${jlpt.complete ? "JLPT-App-Pfad" : `Nächstes Ziel · JLPT ${jlpt.target}`}</span><strong>${jlpt.percent}%</strong></div>
+        <div class="optional-progress" role="progressbar" aria-label="Fortschritt zum JLPT ${jlpt.target}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${jlpt.percent}"><i style="--goal-progress: ${jlpt.percent}%"></i></div>
+        <small>${jlpt.learned} von ${jlpt.total} Inhalten sicher · App-Lernstand, keine offizielle Prüfungsprognose.</small>
+      </article>
+    `);
+  }
+  return cards.length
+    ? `<section class="optional-goal-dashboard" aria-label="Persönliche Lernziele">${cards.join("")}</section>`
+    : "";
+}
+
 function renderReviewOverview() {
   const reviews = getReviewOverview();
   return `
@@ -1551,6 +1642,8 @@ function renderHome() {
       </nav>
 
       ${renderReviewOverview()}
+
+      ${renderOptionalGoalDashboard()}
 
       <section class="hero" aria-labelledby="page-title">
         <div>
@@ -4779,4 +4872,8 @@ for (const dialog of document.querySelectorAll("dialog")) {
 }
 
 saveData();
+window.addEventListener("kana-garten-dashboard-settings", () => {
+  if (state.view === "home") renderHome();
+});
+
 renderHome();

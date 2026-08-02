@@ -5147,6 +5147,69 @@ html.android-app .kana-quiz-stage {
   font-size: 8px;
 }
 
+.optional-goal-dashboard {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  width: min(1180px, 100%);
+  margin: -39px auto 46px;
+}
+
+.optional-goal-card {
+  padding: 15px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--paper-light);
+}
+
+.optional-goal-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.optional-goal-heading span {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.optional-goal-heading strong {
+  color: var(--ink);
+  font-size: 17px;
+}
+
+.optional-progress {
+  height: 9px;
+  margin: 11px 0 9px;
+  overflow: hidden;
+  border-radius: 99px;
+  background: var(--line);
+}
+
+.optional-progress i {
+  display: block;
+  width: var(--goal-progress);
+  height: 100%;
+  border-radius: inherit;
+  background: var(--green);
+  transition: width 420ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.jlpt-goal-card .optional-progress i {
+  background: var(--red);
+}
+
+.optional-goal-card small {
+  display: block;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.42;
+}
+
 /* Android erhält eine eigenständige, touch-orientierte Komposition. */
 html.android-app .paper-grain,
 html.android-app .site-header,
@@ -5261,6 +5324,17 @@ html.android-app .review-overview-actions button {
   flex: 0 0 64px;
   min-height: 55px;
   border-radius: 11px;
+}
+
+html.android-app .optional-goal-dashboard {
+  width: auto;
+  margin: 0 0 16px;
+}
+
+html.android-app .optional-goal-card {
+  min-width: 0;
+  padding: 13px;
+  border-radius: 15px;
 }
 
 html.android-app .hero {
@@ -5646,6 +5720,10 @@ html.android-app .result-card h1 {
 
 @media (max-width: 760px) {
   .review-overview {
+    grid-template-columns: 1fr;
+  }
+
+  .optional-goal-dashboard {
     grid-template-columns: 1fr;
   }
 }

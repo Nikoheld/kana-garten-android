@@ -22,6 +22,13 @@ public final class UsageStore {
     private static final String PREFS = "kana_garten_native_v1";
     private static final String SESSIONS = "usage_sessions";
     private static final String PROGRESS = "progress_backup";
+    private static final String JLPT_PROGRESS = "jlpt_progress";
+    private static final String DAILY_GOAL_ENABLED = "daily_goal_enabled";
+    private static final String DAILY_GOAL_MINUTES = "daily_goal_minutes";
+    private static final String DAILY_GOAL_REMINDER_HOUR = "daily_goal_reminder_hour";
+    private static final String DAILY_GOAL_REMINDER_MINUTE = "daily_goal_reminder_minute";
+    private static final String SHOW_DAILY_GOAL = "show_daily_goal";
+    private static final String SHOW_JLPT_PROGRESS = "show_jlpt_progress";
     private static final DateTimeFormatter DATE = DateTimeFormatter.ISO_LOCAL_DATE;
 
     private final SharedPreferences preferences;
@@ -57,6 +64,69 @@ public final class UsageStore {
 
     public synchronized String restoreProgress() {
         return preferences.getString(PROGRESS, "");
+    }
+
+    public synchronized void backupJlptProgress(String progressJson) {
+        if (progressJson == null || progressJson.length() < 2) return;
+        preferences.edit().putString(JLPT_PROGRESS, progressJson).apply();
+    }
+
+    public synchronized GoalSettings goalSettings() {
+        return new GoalSettings(
+            preferences.getBoolean(DAILY_GOAL_ENABLED, false),
+            clampGoalMinutes(preferences.getInt(DAILY_GOAL_MINUTES, 20)),
+            Math.max(0, Math.min(23, preferences.getInt(DAILY_GOAL_REMINDER_HOUR, 19))),
+            Math.max(0, Math.min(59, preferences.getInt(DAILY_GOAL_REMINDER_MINUTE, 0))),
+            preferences.getBoolean(SHOW_DAILY_GOAL, true),
+            preferences.getBoolean(SHOW_JLPT_PROGRESS, false)
+        );
+    }
+
+    public synchronized void setDailyGoalEnabled(boolean enabled) {
+        preferences.edit().putBoolean(DAILY_GOAL_ENABLED, enabled).apply();
+    }
+
+    public synchronized void setDailyGoalMinutes(int minutes) {
+        preferences.edit().putInt(DAILY_GOAL_MINUTES, clampGoalMinutes(minutes)).apply();
+    }
+
+    public synchronized void setDailyGoalReminderTime(int hour, int minute) {
+        preferences.edit()
+            .putInt(DAILY_GOAL_REMINDER_HOUR, Math.max(0, Math.min(23, hour)))
+            .putInt(DAILY_GOAL_REMINDER_MINUTE, Math.max(0, Math.min(59, minute)))
+            .apply();
+    }
+
+    public synchronized void setShowDailyGoal(boolean show) {
+        preferences.edit().putBoolean(SHOW_DAILY_GOAL, show).apply();
+    }
+
+    public synchronized void setShowJlptProgress(boolean show) {
+        preferences.edit().putBoolean(SHOW_JLPT_PROGRESS, show).apply();
+    }
+
+    public synchronized String dashboardPreferencesJson() {
+        GoalSettings settings = goalSettings();
+        JSONObject result = new JSONObject();
+        try {
+            result.put("dailyGoalEnabled", settings.dailyGoalEnabled);
+            result.put("dailyGoalMinutes", settings.dailyGoalMinutes);
+            result.put("showDailyGoal", settings.showDailyGoal);
+            result.put("showJlptProgress", settings.showJlptProgress);
+            result.put("todaySeconds", todaySeconds());
+        } catch (Exception ignored) {
+            return "{}";
+        }
+        return result.toString();
+    }
+
+    public synchronized int todaySeconds() {
+        String today = LocalDate.now().format(DATE);
+        int seconds = 0;
+        for (Session session : readSessions()) {
+            if (today.equals(session.date)) seconds += session.durationSeconds;
+        }
+        return seconds;
     }
 
     public synchronized Snapshot snapshot() {
@@ -102,7 +172,9 @@ public final class UsageStore {
             secondsByDate.containsKey(today.format(DATE)),
             lastFourteenDays,
             secondsByMode,
-            recent
+            recent,
+            goalSettings(),
+            readJlptProgress()
         );
     }
 
@@ -210,6 +282,27 @@ public final class UsageStore {
         }
     }
 
+    private int clampGoalMinutes(int minutes) {
+        return Math.max(5, Math.min(180, minutes));
+    }
+
+    private JlptProgress readJlptProgress() {
+        String json = preferences.getString(JLPT_PROGRESS, "");
+        if (json.isEmpty()) return JlptProgress.empty();
+        try {
+            JSONObject value = new JSONObject(json);
+            return new JlptProgress(
+                value.optString("target", "N5"),
+                Math.max(0, Math.min(100, value.optInt("percent", 0))),
+                Math.max(0, value.optInt("learned", 0)),
+                Math.max(0, value.optInt("total", 0)),
+                value.optBoolean("complete", false)
+            );
+        } catch (Exception ignored) {
+            return JlptProgress.empty();
+        }
+    }
+
     public static String modeLabel(String mode) {
         switch (mode) {
             case "words": return "Kana-Wörter";
@@ -256,10 +349,13 @@ public final class UsageStore {
         public final List<DayStat> days;
         public final Map<String, Integer> modeSeconds;
         public final List<Session> recentSessions;
+        public final GoalSettings goalSettings;
+        public final JlptProgress jlptProgress;
 
         Snapshot(int streak, int todaySeconds, int weekSeconds, int totalSeconds,
                  int dueReviews, boolean practicedToday, List<DayStat> days,
-                 Map<String, Integer> modeSeconds, List<Session> recentSessions) {
+                 Map<String, Integer> modeSeconds, List<Session> recentSessions,
+                 GoalSettings goalSettings, JlptProgress jlptProgress) {
             this.streak = streak;
             this.todaySeconds = todaySeconds;
             this.weekSeconds = weekSeconds;
@@ -269,6 +365,48 @@ public final class UsageStore {
             this.days = days;
             this.modeSeconds = modeSeconds;
             this.recentSessions = recentSessions;
+            this.goalSettings = goalSettings;
+            this.jlptProgress = jlptProgress;
+        }
+    }
+
+    public static final class GoalSettings {
+        public final boolean dailyGoalEnabled;
+        public final int dailyGoalMinutes;
+        public final int reminderHour;
+        public final int reminderMinute;
+        public final boolean showDailyGoal;
+        public final boolean showJlptProgress;
+
+        GoalSettings(boolean dailyGoalEnabled, int dailyGoalMinutes,
+                     int reminderHour, int reminderMinute, boolean showDailyGoal,
+                     boolean showJlptProgress) {
+            this.dailyGoalEnabled = dailyGoalEnabled;
+            this.dailyGoalMinutes = dailyGoalMinutes;
+            this.reminderHour = reminderHour;
+            this.reminderMinute = reminderMinute;
+            this.showDailyGoal = showDailyGoal;
+            this.showJlptProgress = showJlptProgress;
+        }
+    }
+
+    public static final class JlptProgress {
+        public final String target;
+        public final int percent;
+        public final int learned;
+        public final int total;
+        public final boolean complete;
+
+        JlptProgress(String target, int percent, int learned, int total, boolean complete) {
+            this.target = target;
+            this.percent = percent;
+            this.learned = learned;
+            this.total = total;
+            this.complete = complete;
+        }
+
+        static JlptProgress empty() {
+            return new JlptProgress("N5", 0, 0, 0, false);
         }
     }
 }

@@ -5,6 +5,7 @@ import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.PendingIntent;
+import android.app.TimePickerDialog;
 import android.appwidget.AppWidgetManager;
 import android.content.BroadcastReceiver;
 import android.content.ComponentName;
@@ -40,6 +41,8 @@ import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
+import android.widget.SeekBar;
+import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -87,6 +90,7 @@ public final class MainActivity extends Activity {
         configureSystemBars(window);
         UpdateManager.initialize(this);
         ReviewReminderScheduler.initialize(this);
+        DailyGoalScheduler.initialize(this);
 
         usageStore = new UsageStore(this);
         initializeTextToSpeech();
@@ -223,6 +227,7 @@ public final class MainActivity extends Activity {
         if (requestCode == REQUEST_NOTIFICATIONS) {
             if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
                 ReviewReminderScheduler.scheduleFromProgress(this, usageStore.restoreProgress());
+                DailyGoalScheduler.schedule(this);
                 Toast.makeText(this, "Lern-Erinnerungen sind aktiv.", Toast.LENGTH_SHORT).show();
             } else {
                 Toast.makeText(this, "Du kannst Erinnerungen später unter Einstellungen aktivieren.", Toast.LENGTH_LONG).show();
@@ -402,7 +407,7 @@ public final class MainActivity extends Activity {
         eyebrow.setLetterSpacing(0.14f);
         content.addView(eyebrow);
         content.addView(label("Mehr Kontrolle.", 34, palette.ink, Typeface.BOLD), margins(0, 8, 0, 8));
-        TextView intro = label("Updates, Offline-Paket und dein Streak-Widget an einem Ort.", 13, palette.muted, Typeface.NORMAL);
+        TextView intro = label("Tagesziel, JLPT-Fortschritt, Erinnerungen, Darstellung und Offline-App an einem Ort.", 13, palette.muted, Typeface.NORMAL);
         intro.setLineSpacing(0, 1.3f);
         content.addView(intro, margins(0, 0, 0, 24));
 
@@ -410,6 +415,99 @@ public final class MainActivity extends Activity {
         offline.addView(label("✓  Vollständig offline", 17, palette.green, Typeface.BOLD));
         offline.addView(label("Alle Kana, Wörter, Kanji, Gespräche, Eselsbrücken, Statistiken und Noto Sans JP sind im APK gespeichert. Nur die optionale Update-Prüfung benötigt Internet.", 12, palette.muted, Typeface.NORMAL), margins(0, 8, 0, 0));
         content.addView(offline, margins(0, 0, 0, 12));
+
+        UsageStore.GoalSettings goalSettings = usageStore.goalSettings();
+        LinearLayout dailyGoal = settingCard();
+        LinearLayout dailyHeader = new LinearLayout(this);
+        dailyHeader.setGravity(Gravity.CENTER_VERTICAL);
+        dailyHeader.addView(label("Tägliche Lernzeit", 17, palette.ink, Typeface.BOLD), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        Switch dailyGoalSwitch = settingsSwitch(goalSettings.dailyGoalEnabled, "Tagesziel aktivieren");
+        dailyHeader.addView(dailyGoalSwitch);
+        dailyGoal.addView(dailyHeader);
+        dailyGoal.addView(label(
+            "Lege ein motivierendes Tagesziel fest. Es begrenzt dich nicht: Jede zusätzliche Lernminute wird weiterhin vollständig gezählt.",
+            12,
+            palette.muted,
+            Typeface.NORMAL
+        ), margins(0, 7, 0, 12));
+
+        TextView goalMinutesLabel = label(
+            formatGoalMinutes(goalSettings.dailyGoalMinutes),
+            13,
+            palette.ink,
+            Typeface.BOLD
+        );
+        dailyGoal.addView(goalMinutesLabel);
+        SeekBar goalMinutes = new SeekBar(this);
+        goalMinutes.setMax(35);
+        goalMinutes.setProgress((goalSettings.dailyGoalMinutes - 5) / 5);
+        goalMinutes.setContentDescription("Tägliche Lernzeit in Fünf-Minuten-Schritten");
+        dailyGoal.addView(goalMinutes, margins(0, 4, 0, 8));
+
+        Switch showDailyGoal = settingsSwitch(goalSettings.showDailyGoal, "Auf dem Hauptdashboard anzeigen");
+        dailyGoal.addView(showDailyGoal, margins(0, 0, 0, 9));
+        Button reminderTime = actionButton(
+            formatReminderTime(goalSettings.reminderHour, goalSettings.reminderMinute),
+            palette.ink
+        );
+        dailyGoal.addView(reminderTime);
+        content.addView(dailyGoal, margins(0, 0, 0, 12));
+
+        dailyGoalSwitch.setOnCheckedChangeListener((button, checked) -> {
+            usageStore.setDailyGoalEnabled(checked);
+            refreshGoalSurfaces();
+            if (checked) requestNotificationPermissionIfNeeded();
+        });
+        goalMinutes.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                goalMinutesLabel.setText(formatGoalMinutes(5 + progress * 5));
+            }
+            @Override public void onStartTrackingTouch(SeekBar seekBar) {}
+            @Override public void onStopTrackingTouch(SeekBar seekBar) {
+                usageStore.setDailyGoalMinutes(5 + seekBar.getProgress() * 5);
+                refreshGoalSurfaces();
+            }
+        });
+        showDailyGoal.setOnCheckedChangeListener((button, checked) -> {
+            usageStore.setShowDailyGoal(checked);
+            refreshGoalSurfaces();
+        });
+        reminderTime.setOnClickListener(view -> {
+            UsageStore.GoalSettings current = usageStore.goalSettings();
+            TimePickerDialog picker = new TimePickerDialog(
+                this,
+                palette.dark ? AlertDialog.THEME_DEVICE_DEFAULT_DARK : AlertDialog.THEME_DEVICE_DEFAULT_LIGHT,
+                (timePicker, hour, minute) -> {
+                    usageStore.setDailyGoalReminderTime(hour, minute);
+                    reminderTime.setText(formatReminderTime(hour, minute));
+                    refreshGoalSurfaces();
+                },
+                current.reminderHour,
+                current.reminderMinute,
+                true
+            );
+            picker.setTitle("Wann soll Kana Garten dich erinnern?");
+            picker.show();
+        });
+
+        LinearLayout jlpt = settingCard();
+        LinearLayout jlptHeader = new LinearLayout(this);
+        jlptHeader.setGravity(Gravity.CENTER_VERTICAL);
+        jlptHeader.addView(label("JLPT-Fortschrittsleiste", 17, palette.ink, Typeface.BOLD), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        Switch jlptSwitch = settingsSwitch(goalSettings.showJlptProgress, "JLPT-Leiste anzeigen");
+        jlptHeader.addView(jlptSwitch);
+        jlpt.addView(jlptHeader);
+        jlpt.addView(label(
+            "Zeigt den Weg zum nächsten Level von N5 bis N1 anhand deiner sicher gelernten Wörter, Kanji-Wörter, Kanji und Gespräche. Das ist eine App-Messung, keine offizielle Prüfungsprognose.",
+            12,
+            palette.muted,
+            Typeface.NORMAL
+        ), margins(0, 8, 0, 0));
+        jlptSwitch.setOnCheckedChangeListener((button, checked) -> {
+            usageStore.setShowJlptProgress(checked);
+            refreshGoalSurfaces();
+        });
+        content.addView(jlpt, margins(0, 0, 0, 12));
 
         LinearLayout reminders = settingCard();
         boolean notificationsAllowed = ReviewReminderScheduler.areNotificationsAllowed(this);
@@ -420,7 +518,7 @@ public final class MainActivity extends Activity {
             Typeface.BOLD
         ));
         reminders.addView(label(
-            "Die App meldet sich, sobald Kana, Wörter, Kanji oder Gespräche fällig werden. Jede sichere Wiederholung vergrößert den nächsten Abstand.",
+            "Die App meldet sich bei fälligen Wiederholungen und – falls aktiviert – bei noch fehlender täglicher Lernzeit.",
             12,
             palette.muted,
             Typeface.NORMAL
@@ -555,13 +653,48 @@ public final class MainActivity extends Activity {
             );
             return;
         }
-        try {
-            startActivity(ReviewReminderScheduler.notificationSettingsIntent(this));
-        } catch (Exception ignored) {
-            Intent intent = new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
-                .putExtra(Settings.EXTRA_APP_PACKAGE, getPackageName());
-            startActivity(intent);
+        Intent intent = new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+            .putExtra(Settings.EXTRA_APP_PACKAGE, getPackageName());
+        startActivity(intent);
+    }
+
+    private void requestNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+            && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(
+                new String[]{Manifest.permission.POST_NOTIFICATIONS},
+                REQUEST_NOTIFICATIONS
+            );
         }
+    }
+
+    private void refreshGoalSurfaces() {
+        DailyGoalScheduler.schedule(this);
+        if (dashboardView != null) dashboardView.refresh();
+        if (webView != null) {
+            webView.evaluateJavascript(
+                "window.dispatchEvent(new Event('kana-garten-dashboard-settings'))",
+                null
+            );
+        }
+    }
+
+    private Switch settingsSwitch(boolean checked, String description) {
+        Switch control = new Switch(this);
+        control.setChecked(checked);
+        control.setTextColor(palette.ink);
+        control.setContentDescription(description);
+        control.setMinWidth(dp(54));
+        return control;
+    }
+
+    private String formatGoalMinutes(int minutes) {
+        return String.format(Locale.GERMANY, "Ziel: %d Minuten pro Tag", minutes);
+    }
+
+    private String formatReminderTime(int hour, int minute) {
+        return String.format(Locale.GERMANY, "Erinnerung um %02d:%02d Uhr", hour, minute);
     }
 
     private LinearLayout settingCard() {
@@ -670,6 +803,7 @@ public final class MainActivity extends Activity {
         super.onResume();
         StreakWidgetProvider.updateAll(this);
         ReviewReminderScheduler.scheduleFromProgress(this, usageStore.restoreProgress());
+        DailyGoalScheduler.schedule(this);
         UpdateManager.tryInstallPending(this, false);
     }
 
@@ -706,6 +840,7 @@ public final class MainActivity extends Activity {
         @JavascriptInterface
         public void recordSession(String mode, int durationSeconds, int itemCount) {
             usageStore.recordSession(mode, durationSeconds, itemCount);
+            DailyGoalScheduler.schedule(MainActivity.this);
             runOnUiThread(() -> {
                 StreakWidgetProvider.updateAll(MainActivity.this);
                 if (dashboardView != null) dashboardView.refresh();
@@ -717,6 +852,16 @@ public final class MainActivity extends Activity {
         public void backupProgress(String json) {
             usageStore.backupProgress(json);
             ReviewReminderScheduler.scheduleFromProgress(MainActivity.this, json);
+        }
+
+        @JavascriptInterface
+        public void backupJlptProgress(String json) {
+            usageStore.backupJlptProgress(json);
+        }
+
+        @JavascriptInterface
+        public String getDashboardPreferences() {
+            return usageStore.dashboardPreferencesJson();
         }
 
         @JavascriptInterface
