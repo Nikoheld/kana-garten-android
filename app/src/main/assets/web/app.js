@@ -366,6 +366,7 @@ const DEFAULT_DATA = {
   settings: {
     learningMode: "kana",
     mode: "hiragana",
+    kanaSentenceMode: false,
     selectedRows: ["vowels"],
     maxWordLevel: "N5",
     selectedWordSets: ["first-contact"],
@@ -373,6 +374,7 @@ const DEFAULT_DATA = {
     excludedWordIds: [],
     wordScenarioGroup: "essentials",
     maxKanjiLevel: "N5",
+    kanjiSentenceMode: false,
     maxKanjiWordLevel: "N5",
     maxConversationLevel: "N5",
     selectedConversationTopics: ["all"],
@@ -415,6 +417,16 @@ const KANJI_WORD_BY_ID = new Map(
 const CONVERSATION_BY_ID = new Map(
   CONVERSATIONS.map((conversation) => [conversation.id, conversation]),
 );
+const ROMAJI_BY_KANA = new Map(
+  ALL_KANA.map((kana) => [kana.glyph, kana.primary]),
+);
+[
+  ["ヴ", "vu"], ["ゔ", "vu"], ["ファ", "fa"], ["フィ", "fi"],
+  ["フェ", "fe"], ["フォ", "fo"], ["ティ", "ti"], ["ディ", "di"],
+  ["ウィ", "wi"], ["ウェ", "we"], ["ウォ", "wo"], ["シェ", "she"],
+  ["ジェ", "je"], ["チェ", "che"], ["ツァ", "tsa"], ["ツィ", "tsi"],
+  ["ツェ", "tse"], ["ツォ", "tso"],
+].forEach(([glyph, reading]) => ROMAJI_BY_KANA.set(glyph, reading));
 const app = document.querySelector("#app");
 const guideDialog = document.querySelector("#guide-dialog");
 const confirmDialog = document.querySelector("#confirm-dialog");
@@ -426,12 +438,14 @@ let state = {
   view: "home",
   learningMode: data.settings.learningMode || "kana",
   mode: data.settings.mode || "hiragana",
+  kanaSentenceMode: Boolean(data.settings.kanaSentenceMode),
   maxWordLevel: data.settings.maxWordLevel || "N5",
   selectedWordSets: new Set(data.settings.selectedWordSets || ["first-contact"]),
   includedWordIds: new Set(data.settings.includedWordIds || []),
   excludedWordIds: new Set(data.settings.excludedWordIds || []),
   wordScenarioGroup: data.settings.wordScenarioGroup || "essentials",
   maxKanjiLevel: data.settings.maxKanjiLevel || "N5",
+  kanjiSentenceMode: Boolean(data.settings.kanjiSentenceMode),
   maxKanjiWordLevel: data.settings.maxKanjiWordLevel || "N5",
   maxConversationLevel: data.settings.maxConversationLevel || "N5",
   selectedConversationTopics: new Set(
@@ -571,6 +585,7 @@ function migrateReviewSchedule(progress) {
 function saveData() {
   data.settings.learningMode = state.learningMode;
   data.settings.mode = state.mode;
+  data.settings.kanaSentenceMode = state.kanaSentenceMode;
   data.settings.selectedRows = [...state.selectedRows];
   data.settings.maxWordLevel = state.maxWordLevel;
   data.settings.selectedWordSets = [...state.selectedWordSets];
@@ -578,6 +593,7 @@ function saveData() {
   data.settings.excludedWordIds = [...state.excludedWordIds];
   data.settings.wordScenarioGroup = state.wordScenarioGroup;
   data.settings.maxKanjiLevel = state.maxKanjiLevel;
+  data.settings.kanjiSentenceMode = state.kanjiSentenceMode;
   data.settings.maxKanjiWordLevel = state.maxKanjiWordLevel;
   data.settings.maxConversationLevel = state.maxConversationLevel;
   data.settings.selectedConversationTopics = [
@@ -627,6 +643,129 @@ function normalizeGerman(value) {
     .replace(/[.,!?;:()[\]"“”„']/g, "")
     .replace(/\s+/g, " ")
     .replace(/^(der|die|das|ein|eine)\s+/, "");
+}
+
+function stableTextHash(value) {
+  return [...value].reduce(
+    (hash, character) => (hash * 31 + character.codePointAt(0)) >>> 0,
+    7,
+  );
+}
+
+function highlightTarget(value, target) {
+  return value
+    .split(target)
+    .join(`<mark class="sentence-target" aria-label="Zielzeichen ${target}">${target}</mark>`);
+}
+
+function romanizeKana(value) {
+  const characters = [...value];
+  let result = "";
+  let doubleNextConsonant = false;
+  for (let index = 0; index < characters.length; index += 1) {
+    const character = characters[index];
+    if (character === "っ" || character === "ッ") {
+      doubleNextConsonant = true;
+      continue;
+    }
+    if (character === "ー") {
+      const vowel = result.match(/[aeiou](?=[^aeiou]*$)/)?.[0];
+      if (vowel) result += vowel;
+      continue;
+    }
+    const pair = characters.slice(index, index + 2).join("");
+    let reading = ROMAJI_BY_KANA.get(pair);
+    if (reading) index += 1;
+    else reading = ROMAJI_BY_KANA.get(character);
+    if (!reading) {
+      result += character;
+      doubleNextConsonant = false;
+      continue;
+    }
+    if (doubleNextConsonant) {
+      const consonant = reading.match(/^(ch|sh|ts|[bcdfghjklmpqrstvwxyz])/i)?.[0];
+      if (consonant) result += consonant === "ch" ? "t" : consonant[0];
+      doubleNextConsonant = false;
+    }
+    result += reading;
+  }
+  return result;
+}
+
+function getKanaSentenceContext(kana) {
+  const seen = Number(data.kana[kana.id]?.seen || 0);
+  const candidates = VOCABULARY.filter((word) => word.kana.includes(kana.glyph))
+    .sort((a, b) => a.frequency - b.frequency);
+  if (!candidates.length) {
+    return {
+      japanese: `「${highlightTarget(kana.glyph, kana.glyph)}」のおとをれんしゅうします。`,
+      reading: `„${kana.primary}“ no oto o renshuu shimasu.`,
+      german: `Ich übe den Laut „${kana.primary}“ im Satz.`,
+    };
+  }
+
+  const word = candidates[(stableTextHash(kana.id) + seen) % candidates.length];
+  const markedWord = highlightTarget(word.kana, kana.glyph);
+  const reading = romanizeKana(word.kana);
+  const templates = [
+    {
+      japanese: `これは「${markedWord}」です。`,
+      reading: `Kore wa „${reading}“ desu.`,
+      german: `Das ist „${word.primary}“.`,
+    },
+    {
+      japanese: `「${markedWord}」をおぼえます。`,
+      reading: `„${reading}“ o oboemasu.`,
+      german: `Ich lerne „${word.primary}“.`,
+    },
+    {
+      japanese: `マンガで「${markedWord}」をみました。`,
+      reading: `Manga de „${reading}“ o mimashita.`,
+      german: `Ich habe „${word.primary}“ im Manga gesehen.`,
+    },
+    {
+      japanese: `「${markedWord}」といいます。`,
+      reading: `„${reading}“ to iimasu.`,
+      german: `Man sagt „${word.primary}“.`,
+    },
+  ];
+  return templates[(stableTextHash(word.id) + seen) % templates.length];
+}
+
+function getKanjiSentenceContext(kanji) {
+  const seen = Number(data.kanji[kanji.id]?.seen || 0);
+  const candidates = KANJI_VOCABULARY.filter((word) =>
+    word.spelling.includes(kanji.character),
+  ).sort((a, b) => a.frequency - b.frequency);
+  const candidate = candidates[(stableTextHash(kanji.id) + seen) % Math.max(1, candidates.length)];
+  const exampleMatch = kanji.example.match(/^([^（]+)（([^）]+)）/);
+  const spelling = candidate?.spelling || exampleMatch?.[1] || kanji.character;
+  const reading = candidate?.reading || exampleMatch?.[2] || kanji.readings.split("・")[0];
+  const meaning = candidate?.primary || kanji.primary;
+  const markedWord = highlightTarget(spelling, kanji.character);
+  const templates = [
+    {
+      japanese: `マンガで「${markedWord}」という言葉を見ました。`,
+      reading: `マンガで「${reading}」ということばをみました。`,
+      german: `Ich habe das Wort „${meaning}“ in einem Manga gesehen.`,
+    },
+    {
+      japanese: `今日は「${markedWord}」を覚えます。`,
+      reading: `きょうは「${reading}」をおぼえます。`,
+      german: `Heute lerne ich „${meaning}“.`,
+    },
+    {
+      japanese: `「${markedWord}」の意味が分かりますか。`,
+      reading: `「${reading}」のいみがわかりますか。`,
+      german: `Verstehst du die Bedeutung von „${meaning}“?`,
+    },
+    {
+      japanese: `先生が「${markedWord}」と書きました。`,
+      reading: `せんせいが「${reading}」とかきました。`,
+      german: `Die Lehrperson hat „${meaning}“ geschrieben.`,
+    },
+  ];
+  return templates[(stableTextHash(spelling) + seen) % templates.length];
 }
 
 function shuffle(items) {
@@ -1554,10 +1693,10 @@ function renderHome() {
     : isKanjiWords
     ? "Erkenne ganze Wörter mit Kanji, schreibe die deutsche Bedeutung und verknüpfe danach die Kana-Lesung. Von grundlegenden N5-Wörtern bis zu abstraktem N1-Wortschatz."
     : isKanji
-      ? "Erkenne das Kanji, tippe seine deutsche Bedeutung und entdecke danach Lesung und Manga-Beispiel. Von einfachen Zeichen bis zu komplexen Story-Begriffen."
+      ? "Erkenne Kanji einzeln oder optional direkt im Satz, tippe ihre deutsche Bedeutung und entdecke danach Lesung, Übersetzung und Manga-Beispiel. Von einfachen Zeichen bis zu komplexen Story-Begriffen."
       : isKanaWords
         ? "Wähle genau die Situationen und Wörter, die du brauchst – vom Restaurant und Bahnhof bis zu Arbeit, Arzt und Behörden. Alles Gelernte bleibt im globalen Wiederholungstopf."
-        : "Trainiere Hiragana und Katakana für Sprechblasen, Namen und Soundeffekte. Wähle deine Reihen oder starte direkt mit einem Manga-Pfad.";
+        : "Trainiere Hiragana und Katakana für Sprechblasen, Namen und Soundeffekte – als einzelne Zeichen oder optional markiert in kurzen Sätzen. Wähle deine Reihen oder starte direkt mit einem Manga-Pfad.";
   const hardTitle = isConversation
     ? "Deine schwierigen Gespräche"
     : isKanjiWords
@@ -1689,6 +1828,25 @@ function renderHome() {
   window.scrollTo({ top: 0, behavior: "instant" });
 }
 
+function renderSentenceModeChoice(kind, sentenceMode) {
+  const isKana = kind === "kana";
+  return `
+    <div class="sentence-mode-choice" aria-label="${isKana ? "Kana" : "Kanji"}-Übungsformat">
+      <div class="sentence-mode-copy">
+        <span aria-hidden="true">文</span>
+        <div>
+          <strong>Optional im Satz lernen</strong>
+          <small>${isKana ? "Lies das markierte Kana in einem kurzen Satz. Nach der Antwort erscheinen Romaji und Deutsch." : "Erkenne das markierte Kanji in einem echten Wort. Danach siehst du Satzlesung und Übersetzung."}</small>
+        </div>
+      </div>
+      <div class="sentence-mode-buttons" role="radiogroup" aria-label="Übungsformat wählen">
+        <button type="button" role="radio" aria-checked="${!sentenceMode}" class="${sentenceMode ? "" : "active"}" data-action="set-${kind}-sentence-mode" data-sentence-mode="false"><span>${isKana ? "あ" : "漢"}</span><strong>Einzeln</strong></button>
+        <button type="button" role="radio" aria-checked="${sentenceMode}" class="${sentenceMode ? "active" : ""}" data-action="set-${kind}-sentence-mode" data-sentence-mode="true"><span>…${isKana ? "あ" : "漢"}…</span><strong>Im Satz</strong></button>
+      </div>
+    </div>
+  `;
+}
+
 function renderKanaSetup() {
   const dueKana = getGlobalKanaReviews();
   const learnedKana = getGlobalKanaReviews(false);
@@ -1711,6 +1869,8 @@ function renderKanaSetup() {
         </div>
         <button class="secondary-button" type="button" data-action="start-kana-review" ${dueKana.length ? "" : "disabled"}>${dueKana.length ? "Kana wiederholen" : "Nichts fällig"}</button>
       </div>
+
+      ${renderSentenceModeChoice("kana", state.kanaSentenceMode)}
 
       <div class="manga-presets" aria-label="Manga-Schnellwahl">
         <div class="preset-heading">
@@ -1996,6 +2156,8 @@ function renderKanjiSetup() {
         </div>
         <button class="secondary-button" type="button" data-action="start-kanji-review" ${dueKanji.length ? "" : "disabled"}>${dueKanji.length ? "Fällige wiederholen" : "Nichts fällig"}</button>
       </div>
+
+      ${renderSentenceModeChoice("kanji", state.kanjiSentenceMode)}
 
       <div class="level-grid" role="radiogroup" aria-label="Maximales Kanji-Level">
         ${KANJI_LEVELS.map((level) => {
@@ -3635,6 +3797,7 @@ function startKanjiSession(kanjiPool = null, sourceOverride = null) {
     kind: "kanji",
     source: sourceOverride || (maintenance ? "maintenance" : "kanji-cycle"),
     maxLevel: state.maxKanjiLevel,
+    sentenceMode: state.kanjiSentenceMode,
     cycleIds: cycleKanji.map((kanji) => kanji.id),
     itemIds: cycleKanji.map((kanji) => kanji.id),
     queue: shuffle(cycleKanji.map((kanji) => kanji.id)),
@@ -3730,6 +3893,9 @@ function renderKanjiQuiz() {
   const mastered = session.mastered.size;
   const accuracy = formatPercent(session.correctAttempts, session.attempts);
   const strength = getKanjiStrength(kanji.id);
+  const sentenceContext = session.sentenceMode
+    ? getKanjiSentenceContext(kanji)
+    : null;
 
   document.body.classList.add("is-quizzing");
   app.innerHTML = `
@@ -3751,11 +3917,22 @@ function renderKanjiQuiz() {
         <div class="word-cycle-badge kanji-badge ${isReview ? "review" : ""}">
           ${isReview ? "↻ Langzeit-Wiederholung" : `Manga-Kanji · ${kanji.level}`}
         </div>
-        <p class="quiz-prompt" id="quiz-prompt">Was bedeutet dieses Kanji?</p>
-        <div class="quiz-kana-wrap kanji-card-wrap">
-          <span class="quiz-script-tag">${kanji.level} · Kanji</span>
-          <div class="quiz-kana quiz-kanji" lang="ja">${kanji.character}</div>
-        </div>
+        <p class="quiz-prompt" id="quiz-prompt">${sentenceContext ? "Was bedeutet das markierte Kanji?" : "Was bedeutet dieses Kanji?"}</p>
+        ${sentenceContext ? `
+          <div class="quiz-kana-wrap kanji-card-wrap sentence-context-card kanji-sentence-context">
+            <span class="quiz-script-tag">${kanji.level} · Satzkontext</span>
+            <p class="sentence-japanese" lang="ja">${sentenceContext.japanese}</p>
+            <div class="sentence-context-answer" hidden>
+              <span><small>Lesung</small><strong lang="ja">${sentenceContext.reading}</strong></span>
+              <span><small>Deutsch</small><strong>${sentenceContext.german}</strong></span>
+            </div>
+          </div>
+        ` : `
+          <div class="quiz-kana-wrap kanji-card-wrap">
+            <span class="quiz-script-tag">${kanji.level} · Kanji</span>
+            <div class="quiz-kana quiz-kanji" lang="ja">${kanji.character}</div>
+          </div>
+        `}
 
         <div class="word-confidence">${wordConfidenceDots(strength)}</div>
         <div class="kanji-learning-note" hidden>
@@ -3769,7 +3946,7 @@ function renderKanjiQuiz() {
         </div>
 
         <form class="answer-form word-answer-form kanji-answer-form" autocomplete="off">
-          <label class="answer-label" for="kana-answer">Deutsche Bedeutung</label>
+          <label class="answer-label" for="kana-answer">${sentenceContext ? "Bedeutung des markierten Kanji" : "Deutsche Bedeutung"}</label>
           <div class="input-shell">
             <input
               class="answer-input"
@@ -3795,7 +3972,7 @@ function renderKanjiQuiz() {
             </button>
           </div>
         </form>
-        <p class="queue-note"><span aria-hidden="true">漫</span> Nach jeder Antwort siehst du Lesung und ein typisches Manga-Beispiel.</p>
+        <p class="queue-note"><span aria-hidden="true">${sentenceContext ? "文" : "漫"}</span> ${sentenceContext ? "Nach der Antwort erscheinen Satzlesung und deutsche Übersetzung." : "Nach jeder Antwort siehst du Lesung und ein typisches Manga-Beispiel."}</p>
       </section>
     </div>
   `;
@@ -3853,9 +4030,11 @@ function submitKanjiAnswer(rawAnswer, revealed = false) {
   const revealButton = document.querySelector(".reveal-button");
   const continueButton = document.querySelector(".kanji-continue-button");
   const learningNote = document.querySelector(".kanji-learning-note");
+  const sentenceAnswer = document.querySelector(".sentence-context-answer");
   input.disabled = true;
   revealButton.hidden = true;
   learningNote.hidden = false;
+  if (sentenceAnswer) sentenceAnswer.hidden = false;
   if (wasCorrect) {
     card.classList.add("quiz-card-correct");
     feedback.className = "feedback correct";
@@ -3879,7 +4058,7 @@ function submitKanjiAnswer(rawAnswer, revealed = false) {
       if (!state.session || state.session !== session) return;
       maybeInsertKanjiReview();
       advanceKanjiSession();
-    }, 1500);
+    }, session.sentenceMode ? 2600 : 1500);
   }
 }
 
@@ -3902,6 +4081,7 @@ function finishKanjiSession() {
     accuracy: formatPercent(session.correctAttempts, session.attempts),
     durationSeconds,
     maintenance: session.maintenance,
+    sentenceMode: session.sentenceMode,
   };
   notifyAndroidSession("kanji", durationSeconds, result.total);
   data.kanjiSessions.push({
@@ -3929,6 +4109,7 @@ function startSession(items, source = "selection") {
   state.session = {
     kind: "kana",
     source,
+    sentenceMode: state.kanaSentenceMode,
     itemIds: items.map((item) => item.id),
     targetIds: new Set(items.map((item) => item.id)),
     queue: ids,
@@ -4008,6 +4189,9 @@ function renderQuiz() {
   if (session.kind === "conversation") return renderConversationQuiz();
   const kana = KANA_BY_ID.get(session.currentId);
   const mnemonic = getKanaMnemonic(kana);
+  const sentenceContext = session.sentenceMode
+    ? getKanaSentenceContext(kana)
+    : null;
   const isReview = session.reviewOnly || !session.targetIds.has(kana.id);
   const total = session.itemIds.length;
   const mastered = session.mastered.size;
@@ -4031,11 +4215,22 @@ function renderQuiz() {
 
       <section class="quiz-stage kana-quiz-stage" aria-labelledby="quiz-prompt">
         ${isReview ? '<div class="word-cycle-badge review">↻ Langzeit-Wiederholung</div>' : ""}
-        <p class="quiz-prompt" id="quiz-prompt">Wie liest man dieses Zeichen?</p>
-        <div class="quiz-kana-wrap">
-          <span class="quiz-script-tag">${kana.script}</span>
-          <div class="quiz-kana${[...kana.glyph].length > 1 ? " quiz-kana-combo" : ""}" lang="ja">${kana.glyph}</div>
-        </div>
+        <p class="quiz-prompt" id="quiz-prompt">${sentenceContext ? "Wie liest man das markierte Kana?" : "Wie liest man dieses Zeichen?"}</p>
+        ${sentenceContext ? `
+          <div class="quiz-kana-wrap sentence-context-card kana-sentence-context">
+            <span class="quiz-script-tag">${kana.script} · Satzkontext</span>
+            <p class="sentence-japanese" lang="ja">${sentenceContext.japanese}</p>
+            <div class="sentence-context-answer" hidden>
+              <span><small>Gesamte Lesung</small><strong>${sentenceContext.reading}</strong></span>
+              <span><small>Deutsch</small><strong>${sentenceContext.german}</strong></span>
+            </div>
+          </div>
+        ` : `
+          <div class="quiz-kana-wrap">
+            <span class="quiz-script-tag">${kana.script}</span>
+            <div class="quiz-kana${[...kana.glyph].length > 1 ? " quiz-kana-combo" : ""}" lang="ja">${kana.glyph}</div>
+          </div>
+        `}
 
         <div class="mnemonic-tools">
           <button class="mnemonic-button" type="button" data-action="toggle-mnemonic" aria-expanded="false" aria-controls="kana-mnemonic">
@@ -4052,7 +4247,7 @@ function renderQuiz() {
         </div>
 
         <form class="answer-form" autocomplete="off">
-          <label class="answer-label" for="kana-answer">Deine Antwort in Romaji</label>
+          <label class="answer-label" for="kana-answer">${sentenceContext ? "Markiertes Kana in Romaji" : "Deine Antwort in Romaji"}</label>
           <div class="input-shell">
             <input
               class="answer-input"
@@ -4076,7 +4271,7 @@ function renderQuiz() {
             <button class="reveal-button" type="button" data-action="reveal-answer">Antwort zeigen</button>
           </div>
         </form>
-        <p class="queue-note"><span aria-hidden="true">↻</span> Ein Fehler? Das Zeichen wird später automatisch erneut eingestreut.</p>
+        <p class="queue-note"><span aria-hidden="true">${sentenceContext ? "文" : "↻"}</span> ${sentenceContext ? "Nach der Antwort siehst du die gesamte Lesung und Übersetzung; Fehler kehren später zurück." : "Ein Fehler? Das Zeichen wird später automatisch erneut eingestreut."}</p>
       </section>
     </div>
   `;
@@ -4113,8 +4308,10 @@ function submitAnswer(rawAnswer, revealed = false) {
   const input = document.querySelector("#kana-answer");
   const feedback = document.querySelector(".feedback");
   const revealButton = document.querySelector(".reveal-button");
+  const sentenceAnswer = document.querySelector(".sentence-context-answer");
   input.disabled = true;
   revealButton.hidden = true;
+  if (sentenceAnswer) sentenceAnswer.hidden = false;
 
   if (wasCorrect) {
     card.classList.add("quiz-card-correct");
@@ -4133,7 +4330,7 @@ function submitAnswer(rawAnswer, revealed = false) {
       if (!isReview || isInjectedReview) maybeInsertKanaReview();
       advanceSession();
     },
-    wasCorrect ? 520 : 1350,
+    session.sentenceMode ? (wasCorrect ? 1800 : 2800) : wasCorrect ? 520 : 1350,
   );
 }
 
@@ -4151,6 +4348,7 @@ function finishSession() {
     accuracy: formatPercent(session.correctAttempts, session.attempts),
     durationSeconds,
     source: session.source,
+    sentenceMode: session.sentenceMode,
   };
   notifyAndroidSession("kana", durationSeconds, result.total);
   data.sessions.push({
@@ -4504,6 +4702,26 @@ document.addEventListener("click", (event) => {
     state.learningMode = trigger.dataset.learningMode;
     saveData();
     renderHome();
+  }
+
+  if (action === "set-kana-sentence-mode") {
+    const scrollPosition = window.scrollY;
+    state.kanaSentenceMode = trigger.dataset.sentenceMode === "true";
+    saveData();
+    renderHome();
+    requestAnimationFrame(() =>
+      window.scrollTo({ top: scrollPosition, behavior: "instant" }),
+    );
+  }
+
+  if (action === "set-kanji-sentence-mode") {
+    const scrollPosition = window.scrollY;
+    state.kanjiSentenceMode = trigger.dataset.sentenceMode === "true";
+    saveData();
+    renderHome();
+    requestAnimationFrame(() =>
+      window.scrollTo({ top: scrollPosition, behavior: "instant" }),
+    );
   }
 
   if (action === "set-word-level") {
