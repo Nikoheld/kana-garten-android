@@ -1718,6 +1718,17 @@ function getAndroidDashboardPreferences() {
   }
 }
 
+function formatGoalMinutes(minutes) {
+  const safeMinutes = Math.max(0, Math.round(Number(minutes || 0)));
+  if (safeMinutes < 60)
+    return `${safeMinutes} ${safeMinutes === 1 ? "Minute" : "Minuten"}`;
+  const hours = Math.floor(safeMinutes / 60);
+  const rest = safeMinutes % 60;
+  return rest
+    ? `${hours} Std. ${rest} Min.`
+    : `${hours} ${hours === 1 ? "Stunde" : "Stunden"}`;
+}
+
 function renderOptionalGoalDashboard() {
   const preferences = getAndroidDashboardPreferences();
   const jlpt = getJlptProgress();
@@ -1735,12 +1746,12 @@ function renderOptionalGoalDashboard() {
     const extra = Math.max(0, Math.floor((learnedSeconds - targetSeconds) / 60));
     const status = learnedSeconds >= targetSeconds
       ? extra
-        ? `Ziel erreicht · ${extra} Min darüber`
+        ? `Ziel erreicht · ${formatGoalMinutes(extra)} darüber`
         : "Tagesziel erreicht"
-      : `${remaining} ${remaining === 1 ? "Minute fehlt" : "Minuten fehlen"}`;
+      : `${formatGoalMinutes(remaining)} ${remaining === 1 ? "fehlt" : "fehlen"}`;
     cards.push(`
       <article class="optional-goal-card daily-goal-card">
-        <div class="optional-goal-heading"><span>Tagesziel</span><strong>${learnedMinutes} / ${goalMinutes} Min</strong></div>
+        <div class="optional-goal-heading"><span>Tagesziel</span><strong>${formatGoalMinutes(learnedMinutes)} / ${formatGoalMinutes(goalMinutes)}</strong></div>
         <div class="optional-progress" role="progressbar" aria-label="Tägliches Lernzeitziel" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percentage}"><i style="--goal-progress: ${percentage}%"></i></div>
         <small>${status}. Du kannst unbegrenzt weiterlernen.</small>
       </article>

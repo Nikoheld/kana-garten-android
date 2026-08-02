@@ -24,7 +24,7 @@ Eine vollständige, offlinefähige Android-App zum Lesen, Verstehen und Sprechen
 - vollständig offline gebündelte Inhalte, Datensätze und Noto Sans JP
 - doppelte Fortschrittssicherung: Web-Speicher plus natives Android-Backup
 - lokales Usage-Dashboard mit Lernzeit pro Tag, Bereich, Woche, Streak, fälligen Reviews und letzten Einheiten
-- frei einstellbares tägliches Lernzeitziel von 5 bis 180 Minuten, wählbare Erinnerungszeit und optionale Zielkarte auf dem Lern- und Aktivitäts-Dashboard; zusätzliche Lernzeit bleibt unbegrenzt
+- frei einstellbares tägliches Lernzeitziel von 5 Minuten bis 24 Stunden, wählbare Erinnerungszeit und optionale Zielkarte auf dem Lern- und Aktivitäts-Dashboard; zusätzliche Lernzeit bleibt unbegrenzt
 - optionale JLPT-Fortschrittsleiste von N5 bis N1, ausgewogen aus sicher gelernten Kana-Wörtern, Kanji-Wörtern, Kanji und Gesprächen berechnet
 - Hibi-Widget mit vier Emotionen, die sich bis zum drohenden Streak-Verlust steigern
 - Auto-Updater über signierte APKs aus GitHub Releases

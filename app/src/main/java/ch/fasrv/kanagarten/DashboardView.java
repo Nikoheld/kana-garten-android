@@ -138,12 +138,12 @@ public final class DashboardView extends ScrollView {
         int learnedMinutes = Math.round(snapshot.todaySeconds / 60f);
         int remainingMinutes = Math.max(0, (int) Math.ceil((targetSeconds - snapshot.todaySeconds) / 60d));
 
-        addSectionTitle("Dein Tagesziel", snapshot.goalSettings.dailyGoalMinutes + " Minuten");
+        addSectionTitle("Dein Tagesziel", formatGoalMinutes(snapshot.goalSettings.dailyGoalMinutes));
         LinearLayout card = verticalCard();
         LinearLayout row = new LinearLayout(getContext());
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.addView(text(
-            learnedMinutes + " / " + snapshot.goalSettings.dailyGoalMinutes + " Min",
+            formatGoalMinutes(learnedMinutes) + " / " + formatGoalMinutes(snapshot.goalSettings.dailyGoalMinutes),
             23,
             palette.ink,
             Typeface.BOLD
@@ -156,10 +156,10 @@ public final class DashboardView extends ScrollView {
         if (ratio >= 1f) {
             int extra = Math.max(0, learnedMinutes - snapshot.goalSettings.dailyGoalMinutes);
             detail = extra > 0
-                ? "Ziel erreicht · " + extra + " Minuten freiwillig darüber. Weiterlernen ist jederzeit möglich."
+                ? "Ziel erreicht · " + formatGoalMinutes(extra) + " freiwillig darüber. Weiterlernen ist jederzeit möglich."
                 : "Ziel erreicht. Weiterlernen ist jederzeit möglich.";
         } else {
-            detail = remainingMinutes + (remainingMinutes == 1 ? " Minute fehlt" : " Minuten fehlen")
+            detail = formatGoalMinutes(remainingMinutes) + (remainingMinutes == 1 ? " fehlt" : " fehlen")
                 + " noch. Die Erinnerung kommt um "
                 + String.format(java.util.Locale.GERMANY, "%02d:%02d", snapshot.goalSettings.reminderHour, snapshot.goalSettings.reminderMinute)
                 + " Uhr.";
@@ -339,6 +339,14 @@ public final class DashboardView extends ScrollView {
         int minutes = Math.round(seconds / 60f);
         if (minutes < 60) return minutes + "m";
         return (minutes / 60) + "h " + (minutes % 60) + "m";
+    }
+
+    private String formatGoalMinutes(int minutes) {
+        if (minutes < 60) return minutes + (minutes == 1 ? " Minute" : " Minuten");
+        int hours = minutes / 60;
+        int rest = minutes % 60;
+        String result = hours + (hours == 1 ? " Stunde" : " Stunden");
+        return rest == 0 ? result : result + " " + rest + " Min.";
     }
 
     private int colorForMode(String mode) {

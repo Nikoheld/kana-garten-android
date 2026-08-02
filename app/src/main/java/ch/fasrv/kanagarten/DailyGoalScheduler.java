@@ -92,9 +92,7 @@ final class DailyGoalScheduler {
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
             );
 
-            String amount = remainingMinutes == 1
-                ? "Noch eine Minute"
-                : "Noch " + remainingMinutes + " Minuten";
+            String amount = formatRemaining(remainingMinutes);
             Notification notification = new Notification.Builder(appContext, CHANNEL_ID)
                 .setSmallIcon(R.drawable.ic_review_notification)
                 .setColor(Color.rgb(29, 116, 85))
@@ -112,6 +110,16 @@ final class DailyGoalScheduler {
             if (manager != null) manager.notify(NOTIFICATION_ID, notification);
         }
         schedule(appContext);
+    }
+
+    private static String formatRemaining(int minutes) {
+        if (minutes == 1) return "Noch eine Minute";
+        if (minutes < 60) return "Noch " + minutes + " Minuten";
+        int hours = minutes / 60;
+        int rest = minutes % 60;
+        String hoursText = hours + (hours == 1 ? " Stunde" : " Stunden");
+        if (rest == 0) return "Noch " + hoursText;
+        return "Noch " + hoursText + " und " + rest + " Minuten";
     }
 
     static boolean areNotificationsAllowed(Context context) {
