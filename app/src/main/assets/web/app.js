@@ -517,7 +517,7 @@ function loadData() {
     }
     const parsed = JSON.parse(savedProgress);
     if (!parsed || parsed.version !== 1) return structuredClone(DEFAULT_DATA);
-    return {
+    const restored = {
       ...structuredClone(DEFAULT_DATA),
       ...parsed,
       kana: parsed.kana || {},
@@ -539,9 +539,33 @@ function loadData() {
         ...(parsed.settings || {}),
       },
     };
+    migrateReviewSchedule(restored);
+    return restored;
   } catch {
     return structuredClone(DEFAULT_DATA);
   }
+}
+
+function migrateReviewSchedule(progress) {
+  const now = Date.now();
+  const groups = [
+    ["kana", 1],
+    ["words", 3],
+    ["kanji", 3],
+    ["kanjiWords", 3],
+    ["conversations", 3],
+  ];
+  groups.forEach(([group, minimumStrength]) => {
+    Object.values(progress[group] || {}).forEach((stat) => {
+      const peak = Math.max(
+        Number(stat.peakStrength || 0),
+        Number(stat.strength || 0),
+      );
+      if (peak >= minimumStrength && !Number(stat.nextReviewAt || 0)) {
+        stat.nextReviewAt = now;
+      }
+    });
+  });
 }
 
 function saveData() {
@@ -753,11 +777,23 @@ function getKanjiWordLevelStats(levelId) {
 
 function isKanjiWordReviewDue(word) {
   const stat = data.kanjiWords[word.id];
-  if (!stat || Number(stat.strength || 0) < 3) return false;
+  if (!stat || Number(stat.peakStrength || 0) < 3) return false;
   if (stat.nextReviewAt) return Date.now() >= Number(stat.nextReviewAt);
   return (
     Number(data.kanjiWordPromptCount || 0) - Number(stat.lastPrompt || 0) >=
     reviewInterval(stat.strength)
+  );
+}
+
+function getGlobalKanjiWordReviews(dueOnly = true) {
+  return KANJI_VOCABULARY.filter((word) => {
+    const stat = data.kanjiWords[word.id];
+    if (!stat || Number(stat.peakStrength || 0) < 3) return false;
+    return !dueOnly || isKanjiWordReviewDue(word);
+  }).sort(
+    (a, b) =>
+      Number(data.kanjiWords[a.id]?.nextReviewAt || 0) -
+      Number(data.kanjiWords[b.id]?.nextReviewAt || 0),
   );
 }
 
@@ -771,7 +807,7 @@ function getKanjiWordStats() {
   ).length;
   const seen = stats.reduce((sum, stat) => sum + (stat.seen || 0), 0);
   const correct = stats.reduce((sum, stat) => sum + (stat.correct || 0), 0);
-  const reviewDue = eligible.filter((word) => isKanjiWordReviewDue(word)).length;
+  const reviewDue = getGlobalKanjiWordReviews().length;
   return {
     total: eligible.length,
     learned,
@@ -796,7 +832,7 @@ function recordKanjiWordAttempt(word, wasCorrect) {
   stat.lastPrompt = data.kanjiWordPromptCount;
   if (wasCorrect) {
     stat.correct += 1;
-    stat.strength = Math.min(5, Number(stat.strength || 0) + 1);
+    stat.strength = Math.min(10, Number(stat.strength || 0) + 1);
     stat.peakStrength = Math.max(stat.peakStrength || 0, stat.strength);
   } else {
     stat.wrong += 1;
@@ -1023,10 +1059,24 @@ function spacedReviewDelay(strength) {
   return 4 * 60 * 60 * 1000;
 }
 
+function kanaReviewDelay(strength) {
+  if (strength <= 1) return 10 * 60 * 1000;
+  if (strength === 2) return 60 * 60 * 1000;
+  return spacedReviewDelay(strength);
+}
+
 function updateNextReview(stat, wasCorrect) {
   if (wasCorrect && Number(stat.strength || 0) >= 3) {
     stat.nextReviewAt = Date.now() + spacedReviewDelay(stat.strength);
   } else if (!wasCorrect && Number(stat.peakStrength || 0) >= 3) {
+    stat.nextReviewAt = Date.now() + 10 * 60 * 1000;
+  }
+}
+
+function updateKanaNextReview(stat, wasCorrect) {
+  if (wasCorrect && Number(stat.strength || 0) >= 1) {
+    stat.nextReviewAt = Date.now() + kanaReviewDelay(stat.strength);
+  } else if (!wasCorrect && Number(stat.peakStrength || 0) >= 1) {
     stat.nextReviewAt = Date.now() + 10 * 60 * 1000;
   }
 }
@@ -1079,11 +1129,23 @@ function getKanjiStrength(kanjiId) {
 
 function isKanjiReviewDue(kanji) {
   const stat = data.kanji[kanji.id];
-  if (!stat || Number(stat.strength || 0) < 3) return false;
+  if (!stat || Number(stat.peakStrength || 0) < 3) return false;
   if (stat.nextReviewAt) return Date.now() >= Number(stat.nextReviewAt);
   return (
     Number(data.kanjiPromptCount || 0) - Number(stat.lastPrompt || 0) >=
     reviewInterval(stat.strength)
+  );
+}
+
+function getGlobalKanjiReviews(dueOnly = true) {
+  return KANJI.filter((kanji) => {
+    const stat = data.kanji[kanji.id];
+    if (!stat || Number(stat.peakStrength || 0) < 3) return false;
+    return !dueOnly || isKanjiReviewDue(kanji);
+  }).sort(
+    (a, b) =>
+      Number(data.kanji[a.id]?.nextReviewAt || 0) -
+      Number(data.kanji[b.id]?.nextReviewAt || 0),
   );
 }
 
@@ -1095,7 +1157,7 @@ function getKanjiStats() {
   ).length;
   const seen = stats.reduce((sum, stat) => sum + (stat.seen || 0), 0);
   const correct = stats.reduce((sum, stat) => sum + (stat.correct || 0), 0);
-  const reviewDue = eligible.filter((kanji) => isKanjiReviewDue(kanji)).length;
+  const reviewDue = getGlobalKanjiReviews().length;
   return {
     total: eligible.length,
     learned,
@@ -1120,7 +1182,7 @@ function recordKanjiAttempt(kanji, wasCorrect) {
   stat.lastPrompt = data.kanjiPromptCount;
   if (wasCorrect) {
     stat.correct += 1;
-    stat.strength = Math.min(5, Number(stat.strength || 0) + 1);
+    stat.strength = Math.min(10, Number(stat.strength || 0) + 1);
     stat.peakStrength = Math.max(stat.peakStrength || 0, stat.strength);
   } else {
     stat.wrong += 1;
@@ -1148,6 +1210,29 @@ function getHardItems(limit = 20) {
     .slice(0, limit);
 }
 
+function isKanaReviewDue(kana) {
+  const stat = data.kana[kana.id];
+  return Boolean(
+    stat &&
+      Number(stat.peakStrength || 0) >= 1 &&
+      Number(stat.nextReviewAt || 0) <= Date.now(),
+  );
+}
+
+function getGlobalKanaReviews(dueOnly = true) {
+  return ALL_KANA.filter((kana) => {
+    const stat = data.kana[kana.id];
+    if (!stat || Number(stat.peakStrength || 0) < 1) return false;
+    return !dueOnly || isKanaReviewDue(kana);
+  }).sort((a, b) => {
+    const dueDifference =
+      Number(data.kana[a.id]?.nextReviewAt || 0) -
+      Number(data.kana[b.id]?.nextReviewAt || 0);
+    if (dueDifference) return dueDifference;
+    return difficultyScore(b.id) - difficultyScore(a.id);
+  });
+}
+
 function recordAttempt(kana, wasCorrect) {
   const previous = data.kana[kana.id] || {
     seen: 0,
@@ -1166,7 +1251,7 @@ function recordAttempt(kana, wasCorrect) {
   if (wasCorrect) {
     previous.correct += 1;
     previous.difficulty = Math.max(0, Number(previous.difficulty || 0) - 0.45);
-    previous.strength = Math.min(5, Number(previous.strength || 0) + 1);
+    previous.strength = Math.min(10, Number(previous.strength || 0) + 1);
     previous.peakStrength = Math.max(
       Number(previous.peakStrength || 0),
       previous.strength,
@@ -1178,7 +1263,7 @@ function recordAttempt(kana, wasCorrect) {
     previous.strength = Math.max(0, Number(previous.strength || 0) - 1);
   }
 
-  updateNextReview(previous, wasCorrect);
+  updateKanaNextReview(previous, wasCorrect);
 
   data.kana[kana.id] = previous;
   saveData();
@@ -1236,7 +1321,45 @@ function getGlobalStats() {
     seen,
     accuracy: formatPercent(correct, seen),
     streak: getStreak(),
+    reviewDue: getGlobalKanaReviews().length,
   };
+}
+
+function getReviewOverview() {
+  const areas = [
+    { id: "kana", label: "Kana", glyph: "あ", count: getGlobalKanaReviews().length },
+    { id: "words", label: "Kana-Wörter", glyph: "こと", count: getGlobalReviewWords().length },
+    { id: "kanji", label: "Kanji", glyph: "漢", count: getGlobalKanjiReviews().length },
+    { id: "kanji-words", label: "Kanji-Wörter", glyph: "熟語", count: getGlobalKanjiWordReviews().length },
+    { id: "conversation", label: "Gespräche", glyph: "会話", count: getGlobalConversationReviews().length },
+  ];
+  return {
+    areas,
+    total: areas.reduce((sum, area) => sum + area.count, 0),
+  };
+}
+
+function renderReviewOverview() {
+  const reviews = getReviewOverview();
+  return `
+    <section class="review-overview${reviews.total ? " has-due" : ""}" aria-label="Fällige Langzeit-Wiederholungen">
+      <div class="review-overview-copy">
+        <span aria-hidden="true">↻</span>
+        <div><strong>${reviews.total ? `${reviews.total} Wiederholungen sind fällig` : "Dein Gedächtnis ist frisch"}</strong><small>${reviews.total ? "Wähle einen Bereich für eine kurze Wiederholungsrunde." : "Neue Termine erscheinen automatisch mit wachsenden Abständen."}</small></div>
+      </div>
+      <div class="review-overview-actions">
+        ${reviews.areas
+          .map(
+            (area) => `
+              <button type="button" data-action="start-area-review" data-review-area="${area.id}" ${area.count ? "" : "disabled"}>
+                <span lang="ja">${area.glyph}</span><strong>${area.count}</strong><small>${area.label}</small>
+              </button>
+            `,
+          )
+          .join("")}
+      </div>
+    </section>
+  `;
 }
 
 function checkIcon() {
@@ -1427,6 +1550,8 @@ function renderHome() {
         </button>
       </nav>
 
+      ${renderReviewOverview()}
+
       <section class="hero" aria-labelledby="page-title">
         <div>
           <span class="eyebrow">${heroEyebrow}</span>
@@ -1450,7 +1575,7 @@ function renderHome() {
         </article>
         <article class="stat-card">
           <span class="stat-label">Trefferquote</span>
-          <div class="stat-value">${isMemoryMode ? memoryStats.accuracy : global.accuracy}<small>${isMemoryMode ? `${memoryStats.reviewDue} Wiederholungen bereit` : global.streak ? `${global.streak} Tag${global.streak === 1 ? "" : "e"} in Folge` : "Starte heute"}</small></div>
+          <div class="stat-value">${isMemoryMode ? memoryStats.accuracy : global.accuracy}<small>${isMemoryMode ? `${memoryStats.reviewDue} Wiederholungen bereit` : global.reviewDue ? `${global.reviewDue} Kana-Wiederholungen bereit` : global.streak ? `${global.streak} Tag${global.streak === 1 ? "" : "e"} in Folge` : "Starte heute"}</small></div>
         </article>
         <article class="hard-card">
           <div>
@@ -1469,6 +1594,8 @@ function renderHome() {
 }
 
 function renderKanaSetup() {
+  const dueKana = getGlobalKanaReviews();
+  const learnedKana = getGlobalKanaReviews(false);
   return `
     <section class="setup" id="setup" aria-labelledby="setup-title">
       <div class="section-heading">
@@ -1477,6 +1604,16 @@ function renderKanaSetup() {
           <h2 id="setup-title">Was möchtest du üben?</h2>
         </div>
         <p>Du kannst beliebig viele Reihen kombinieren. Im Mix-Modus lernst du beide Schriftsysteme gleichzeitig.</p>
+      </div>
+
+      <div class="srs-pot-card kana-srs-card">
+        <div class="srs-pot-icon" aria-hidden="true">↻</div>
+        <div>
+          <span class="eyebrow">Kana-Langzeitgedächtnis</span>
+          <strong>${dueKana.length ? `${dueKana.length} Zeichen sind jetzt fällig.` : "Alle Zeichen sind frisch."}</strong>
+          <p>${learnedKana.length} erkannte Kana im Wiederholungsplan. Erst nach 10 Minuten, dann nach 1 Stunde und später in immer größeren Abständen.</p>
+        </div>
+        <button class="secondary-button" type="button" data-action="start-kana-review" ${dueKana.length ? "" : "disabled"}>${dueKana.length ? "Kana wiederholen" : "Nichts fällig"}</button>
       </div>
 
       <div class="manga-presets" aria-label="Manga-Schnellwahl">
@@ -1654,6 +1791,8 @@ function renderWordSetup() {
 
 function renderKanjiWordSetup() {
   const words = getEligibleKanjiWords();
+  const dueWords = getGlobalKanjiWordReviews();
+  const learnedWords = getGlobalKanjiWordReviews(false);
   const maxLevelIndex = KANJI_WORD_LEVELS.findIndex(
     (level) => level.id === state.maxKanjiWordLevel,
   );
@@ -1665,6 +1804,16 @@ function renderKanjiWordSetup() {
           <h2 id="setup-title">Ganze Wörter lesen. Von N5 bis N1.</h2>
         </div>
         <p>Wähle dein Ziellevel. Einfachere Stufen sind automatisch enthalten und die häufigsten Kanji-Wörter kommen zuerst.</p>
+      </div>
+
+      <div class="srs-pot-card kanji-word-srs-card">
+        <div class="srs-pot-icon" aria-hidden="true">熟</div>
+        <div>
+          <span class="eyebrow">Globaler Wiederholungstopf</span>
+          <strong>${dueWords.length ? `${dueWords.length} Kanji-Wörter sind fällig.` : "Gerade ist alles frisch."}</strong>
+          <p>${learnedWords.length} sicher gelernte Wörter bleiben unabhängig vom gewählten JLPT-Level im Langzeitplan.</p>
+        </div>
+        <button class="secondary-button" type="button" data-action="start-kanji-word-review" ${dueWords.length ? "" : "disabled"}>${dueWords.length ? "Fällige wiederholen" : "Nichts fällig"}</button>
       </div>
 
       <div class="word-mode-note kanji-word-mode-note" aria-label="Lernmodus">
@@ -1730,6 +1879,8 @@ function renderKanjiWordSetup() {
 
 function renderKanjiSetup() {
   const kanji = getEligibleKanji();
+  const dueKanji = getGlobalKanjiReviews();
+  const learnedKanji = getGlobalKanjiReviews(false);
   return `
     <section class="setup word-setup kanji-setup" id="setup" aria-labelledby="setup-title">
       <div class="section-heading">
@@ -1738,6 +1889,16 @@ function renderKanjiSetup() {
           <h2 id="setup-title">Wie komplex darf die Story werden?</h2>
         </div>
         <p>Wähle das höchste Level. Auch bei N1 beginnt dein Weg mit einfachen, häufigen Kanji aus Alltag und Dialogen.</p>
+      </div>
+
+      <div class="srs-pot-card kanji-srs-card">
+        <div class="srs-pot-icon" aria-hidden="true">漢</div>
+        <div>
+          <span class="eyebrow">Globaler Wiederholungstopf</span>
+          <strong>${dueKanji.length ? `${dueKanji.length} Kanji sind jetzt fällig.` : "Gerade ist alles frisch."}</strong>
+          <p>${learnedKanji.length} sichere Kanji kehren automatisch zurück. Mit jedem richtigen Abruf wird der Abstand länger.</p>
+        </div>
+        <button class="secondary-button" type="button" data-action="start-kanji-review" ${dueKanji.length ? "" : "disabled"}>${dueKanji.length ? "Fällige wiederholen" : "Nichts fällig"}</button>
       </div>
 
       <div class="level-grid" role="radiogroup" aria-label="Maximales Kanji-Level">
@@ -2439,6 +2600,7 @@ function startKanjiWordSession(wordPool = null, sourceOverride = null) {
     mastered: new Set(),
     reviewedIds: new Set(),
     maintenance,
+    reviewOnly: sourceOverride === "kanji-word-review",
     attempts: 0,
     correctAttempts: 0,
     wrongAttempts: 0,
@@ -2458,6 +2620,15 @@ function startHardKanjiWordSession() {
     return;
   }
   startKanjiWordSession(hardWords.slice(0, 4), "hard-kanji-words");
+}
+
+function startKanjiWordReviewSession() {
+  const dueWords = getGlobalKanjiWordReviews().slice(0, 20);
+  if (!dueWords.length) {
+    showToast("Gerade ist keine Kanji-Wort-Wiederholung fällig.");
+    return;
+  }
+  startKanjiWordSession(dueWords, "kanji-word-review");
 }
 
 function advanceKanjiWordSession() {
@@ -2500,17 +2671,15 @@ function insertKanjiWordLater(wordId, minDistance = 2) {
 function maybeInsertKanjiWordReview() {
   const session = state.session;
   if (!session || session.kind !== "kanji-words") return;
-  if (session.source === "hard-kanji-words") return;
+  if (session.source === "hard-kanji-words" || session.reviewOnly) return;
   const excluded = new Set([
     ...session.cycleIds,
     ...session.queue,
     ...session.reviewedIds,
     session.currentId,
   ]);
-  const review = getEligibleKanjiWords()
-    .filter(
-      (word) => !excluded.has(word.id) && isKanjiWordReviewDue(word),
-    )
+  const review = getGlobalKanjiWordReviews()
+    .filter((word) => !excluded.has(word.id))
     .sort(
       (a, b) =>
         Number(data.kanjiWords[a.id]?.lastPrompt || 0) -
@@ -2523,7 +2692,7 @@ function renderKanjiWordQuiz() {
   const session = state.session;
   if (!session || session.kind !== "kanji-words") return;
   const word = KANJI_WORD_BY_ID.get(session.currentId);
-  const isReview = !session.cycleIds.includes(word.id);
+  const isReview = session.reviewOnly || !session.cycleIds.includes(word.id);
   const focusedPractice = session.source === "hard-kanji-words";
   const total = session.cycleIds.length;
   const mastered = session.mastered.size;
@@ -2617,7 +2786,7 @@ function submitKanjiWordAnswer(rawAnswer, revealed = false) {
   if (!answer && !revealed) return;
   const wasCorrect =
     !revealed && word.answers.map(normalizeGerman).includes(answer);
-  const isReview = !session.cycleIds.includes(word.id);
+  const isReview = session.reviewOnly || !session.cycleIds.includes(word.id);
 
   session.locked = true;
   session.attempts += 1;
@@ -2630,7 +2799,10 @@ function submitKanjiWordAnswer(rawAnswer, revealed = false) {
   const newStrength = recordKanjiWordAttempt(word, wasCorrect);
 
   if (isReview) {
-    if (wasCorrect) session.reviewedIds.add(word.id);
+    if (wasCorrect) {
+      session.reviewedIds.add(word.id);
+      if (session.reviewOnly) session.mastered.add(word.id);
+    }
     else insertKanjiWordLater(word.id, 2);
   } else if (wasCorrect && (session.maintenance || newStrength >= 3)) {
     session.mastered.add(word.id);
@@ -3328,11 +3500,14 @@ function finishConversationSession() {
   renderConversationResult();
 }
 
-function startKanjiSession() {
-  const eligible = getEligibleKanji();
+function startKanjiSession(kanjiPool = null, sourceOverride = null) {
+  const focusedPractice = Array.isArray(kanjiPool);
+  const eligible = focusedPractice ? kanjiPool : getEligibleKanji();
   const weakKanji = eligible.filter((kanji) => getKanjiStrength(kanji.id) < 3);
-  const maintenance = weakKanji.length === 0;
-  const candidates = maintenance
+  const maintenance = !focusedPractice && weakKanji.length === 0;
+  const candidates = focusedPractice
+    ? eligible
+    : maintenance
     ? [...eligible].sort(
         (a, b) =>
           Number(data.kanji[a.id]?.lastPrompt || 0) -
@@ -3340,7 +3515,7 @@ function startKanjiSession() {
       )
     : weakKanji;
   const cycleKanji = candidates.slice(0, 4);
-  if (!maintenance && cycleKanji.length < 3) {
+  if (!focusedPractice && !maintenance && cycleKanji.length < 3) {
     const cycleIds = new Set(cycleKanji.map((kanji) => kanji.id));
     const reviewFillers = eligible
       .filter(
@@ -3362,7 +3537,7 @@ function startKanjiSession() {
   clearTimeout(state.timer);
   state.session = {
     kind: "kanji",
-    source: maintenance ? "maintenance" : "kanji-cycle",
+    source: sourceOverride || (maintenance ? "maintenance" : "kanji-cycle"),
     maxLevel: state.maxKanjiLevel,
     cycleIds: cycleKanji.map((kanji) => kanji.id),
     itemIds: cycleKanji.map((kanji) => kanji.id),
@@ -3371,6 +3546,7 @@ function startKanjiSession() {
     mastered: new Set(),
     reviewedIds: new Set(),
     maintenance,
+    reviewOnly: sourceOverride === "kanji-review",
     attempts: 0,
     correctAttempts: 0,
     wrongAttempts: 0,
@@ -3381,6 +3557,15 @@ function startKanjiSession() {
   };
   state.view = "quiz";
   advanceKanjiSession();
+}
+
+function startKanjiReviewSession() {
+  const dueKanji = getGlobalKanjiReviews().slice(0, 20);
+  if (!dueKanji.length) {
+    showToast("Gerade ist keine Kanji-Wiederholung fällig.");
+    return;
+  }
+  startKanjiSession(dueKanji, "kanji-review");
 }
 
 function advanceKanjiSession() {
@@ -3423,14 +3608,15 @@ function insertKanjiLater(kanjiId, minDistance = 2) {
 function maybeInsertKanjiReview() {
   const session = state.session;
   if (!session || session.kind !== "kanji") return;
+  if (session.reviewOnly) return;
   const excluded = new Set([
     ...session.cycleIds,
     ...session.queue,
     ...session.reviewedIds,
     session.currentId,
   ]);
-  const review = getEligibleKanji()
-    .filter((kanji) => !excluded.has(kanji.id) && isKanjiReviewDue(kanji))
+  const review = getGlobalKanjiReviews()
+    .filter((kanji) => !excluded.has(kanji.id))
     .sort(
       (a, b) =>
         Number(data.kanji[a.id]?.lastPrompt || 0) -
@@ -3443,7 +3629,7 @@ function renderKanjiQuiz() {
   const session = state.session;
   if (!session || session.kind !== "kanji") return;
   const kanji = KANJI_BY_ID.get(session.currentId);
-  const isReview = !session.cycleIds.includes(kanji.id);
+  const isReview = session.reviewOnly || !session.cycleIds.includes(kanji.id);
   const total = session.cycleIds.length;
   const mastered = session.mastered.size;
   const accuracy = formatPercent(session.correctAttempts, session.attempts);
@@ -3538,7 +3724,7 @@ function submitKanjiAnswer(rawAnswer, revealed = false) {
   if (!answer && !revealed) return;
   const wasCorrect =
     !revealed && kanji.answers.map(normalizeGerman).includes(answer);
-  const isReview = !session.cycleIds.includes(kanji.id);
+  const isReview = session.reviewOnly || !session.cycleIds.includes(kanji.id);
 
   session.locked = true;
   session.attempts += 1;
@@ -3551,7 +3737,10 @@ function submitKanjiAnswer(rawAnswer, revealed = false) {
   const newStrength = recordKanjiAttempt(kanji, wasCorrect);
 
   if (isReview) {
-    if (wasCorrect) session.reviewedIds.add(kanji.id);
+    if (wasCorrect) {
+      session.reviewedIds.add(kanji.id);
+      if (session.reviewOnly) session.mastered.add(kanji.id);
+    }
     else insertKanjiLater(kanji.id, 2);
   } else if (
     wasCorrect &&
@@ -3607,6 +3796,7 @@ function finishKanjiSession() {
   );
   const result = {
     kind: "kanji",
+    source: session.source,
     itemIds: [...session.cycleIds],
     total: session.cycleIds.length,
     attempts: session.attempts,
@@ -3644,9 +3834,13 @@ function startSession(items, source = "selection") {
     kind: "kana",
     source,
     itemIds: items.map((item) => item.id),
+    targetIds: new Set(items.map((item) => item.id)),
     queue: ids,
     currentId: null,
     mastered: new Set(),
+    reviewedIds: new Set(),
+    reviewOnly: source === "kana-review",
+    answersSinceReview: 0,
     attempts: 0,
     correctAttempts: 0,
     wrongAttempts: 0,
@@ -3657,6 +3851,43 @@ function startSession(items, source = "selection") {
   };
   state.view = "quiz";
   advanceSession();
+}
+
+function startKanaReviewSession() {
+  const dueKana = getGlobalKanaReviews().slice(0, 20);
+  if (!dueKana.length) {
+    showToast("Gerade ist keine Kana-Wiederholung fällig.");
+    return;
+  }
+  startSession(dueKana, "kana-review");
+}
+
+function insertKanaLater(kanaId, minDistance = 2) {
+  const session = state.session;
+  if (!session || session.kind !== "kana" || session.queue.includes(kanaId)) return;
+  const minIndex = Math.min(minDistance, session.queue.length);
+  const maxIndex = Math.min(minDistance + 3, session.queue.length);
+  const insertionIndex =
+    minIndex + Math.floor(Math.random() * (maxIndex - minIndex + 1));
+  session.queue.splice(insertionIndex, 0, kanaId);
+}
+
+function maybeInsertKanaReview() {
+  const session = state.session;
+  if (!session || session.kind !== "kana" || session.reviewOnly || session.source === "hard") return;
+  session.answersSinceReview += 1;
+  if (session.answersSinceReview < 4) return;
+  const excluded = new Set([
+    ...session.targetIds,
+    ...session.queue,
+    ...session.reviewedIds,
+    session.currentId,
+  ]);
+  const review = getGlobalKanaReviews().find((kana) => !excluded.has(kana.id));
+  if (review) {
+    session.answersSinceReview = 0;
+    insertKanaLater(review.id, 2);
+  }
 }
 
 function advanceSession() {
@@ -3681,6 +3912,7 @@ function renderQuiz() {
   if (session.kind === "conversation") return renderConversationQuiz();
   const kana = KANA_BY_ID.get(session.currentId);
   const mnemonic = getKanaMnemonic(kana);
+  const isReview = session.reviewOnly || !session.targetIds.has(kana.id);
   const total = session.itemIds.length;
   const mastered = session.mastered.size;
   const accuracy = formatPercent(session.correctAttempts, session.attempts);
@@ -3702,6 +3934,7 @@ function renderQuiz() {
       </div>
 
       <section class="quiz-stage kana-quiz-stage" aria-labelledby="quiz-prompt">
+        ${isReview ? '<div class="word-cycle-badge review">↻ Langzeit-Wiederholung</div>' : ""}
         <p class="quiz-prompt" id="quiz-prompt">Wie liest man dieses Zeichen?</p>
         <div class="quiz-kana-wrap">
           <span class="quiz-script-tag">${kana.script}</span>
@@ -3766,11 +3999,14 @@ function submitAnswer(rawAnswer, revealed = false) {
 
   const wasCorrect =
     !revealed && kana.answers.map(normalizeRomaji).includes(answer);
+  const isInjectedReview = !session.targetIds.has(kana.id);
+  const isReview = session.reviewOnly || isInjectedReview;
   session.locked = true;
   session.attempts += 1;
   if (wasCorrect) {
     session.correctAttempts += 1;
-    session.mastered.add(kana.id);
+    if (isInjectedReview) session.reviewedIds.add(kana.id);
+    else session.mastered.add(kana.id);
   } else {
     session.wrongAttempts += 1;
     session.mistakesById[kana.id] = (session.mistakesById[kana.id] || 0) + 1;
@@ -3797,13 +4033,8 @@ function submitAnswer(rawAnswer, revealed = false) {
   state.timer = window.setTimeout(
     () => {
       if (!state.session || state.session !== session) return;
-      if (!wasCorrect) {
-        const minIndex = Math.min(2, session.queue.length);
-        const maxIndex = Math.min(5, session.queue.length);
-        const insertionIndex =
-          minIndex + Math.floor(Math.random() * (maxIndex - minIndex + 1));
-        session.queue.splice(insertionIndex, 0, kana.id);
-      }
+      if (!wasCorrect) insertKanaLater(kana.id, 2);
+      if (!isReview || isInjectedReview) maybeInsertKanaReview();
       advanceSession();
     },
     wasCorrect ? 520 : 1350,
@@ -3864,14 +4095,15 @@ function renderResult() {
     .map((id) => KANA_BY_ID.get(id)?.glyph)
     .filter(Boolean)
     .join(" · ");
+  const srsReview = result.source === "kana-review";
 
   app.innerHTML = `
     <div class="result-view">
       <section class="result-card" aria-labelledby="result-title">
         <div class="result-seal" aria-hidden="true">完</div>
-        <span class="eyebrow">Lerneinheit geschafft</span>
-        <h1 id="result-title">Alle Kana sitzen!</h1>
-        <p>Jedes ausgewählte Zeichen wurde mindestens einmal richtig erkannt. Gute Arbeit – diese Runde ist komplett.</p>
+        <span class="eyebrow">${srsReview ? "Fällige Kana wiederholt" : "Lerneinheit geschafft"}</span>
+        <h1 id="result-title">${srsReview ? "Erinnerung aufgefrischt!" : "Alle Kana sitzen!"}</h1>
+        <p>${srsReview ? "Alle Zeichen dieser Runde haben einen neuen Termin. Mit jedem sicheren Abruf wird der Abstand größer." : "Jedes ausgewählte Zeichen wurde mindestens einmal richtig erkannt. Gute Arbeit – diese Runde ist komplett."}</p>
 
         <div class="result-stats">
           <div class="result-stat"><strong>${result.total}</strong><span>Gemeistert</span></div>
@@ -3888,7 +4120,9 @@ function renderResult() {
         <div class="result-actions">
           <button class="secondary-button" type="button" data-action="home">Andere Reihen wählen</button>
           ${
-            difficultIds.length
+            srsReview
+              ? `<button class="primary-button" type="button" data-action="start-kana-review">Weitere fällige Kana →</button>`
+              : difficultIds.length
               ? `<button class="primary-button" type="button" data-action="retry-mistakes">Fehler nochmals üben →</button>`
               : `<button class="primary-button" type="button" data-action="retry-session">Runde wiederholen →</button>`
           }
@@ -3945,13 +4179,14 @@ function renderKanjiWordResult() {
     .filter(Boolean);
   const learnedTotal = getKanjiWordStats().learned;
   const focusedPractice = result.source === "hard-kanji-words";
+  const srsReview = result.source === "kanji-word-review";
   app.innerHTML = `
     <div class="result-view">
       <section class="result-card word-result-card kanji-word-result-card" aria-labelledby="result-title">
         <div class="result-seal" aria-hidden="true">語</div>
-        <span class="eyebrow">${focusedPractice ? "Schwierige Kanji-Wörter trainiert" : result.maintenance ? "Wiederholung geschafft" : "JLPT-Kanji-Wortgruppe geschafft"}</span>
-        <h1 id="result-title">${focusedPractice ? "Problemwörter geknackt!" : result.maintenance ? "Sicher gelesen!" : `${result.total} Kanji-Wörter sitzen!`}</h1>
-        <p>${focusedPractice ? "Bedeutung und Kana-Lesung dieser schwierigen Wörter sind jetzt stärker verknüpft." : result.maintenance ? "Diese Kanji-Wörter sind wieder frisch im Gedächtnis und kehren später erneut zurück." : "Du hast Schreibweise, Bedeutung und Kana-Lesung sicher miteinander verbunden. Die Wörter bleiben in der Langzeit-Wiederholung."}</p>
+        <span class="eyebrow">${srsReview ? "Fällige Kanji-Wörter wiederholt" : focusedPractice ? "Schwierige Kanji-Wörter trainiert" : result.maintenance ? "Wiederholung geschafft" : "JLPT-Kanji-Wortgruppe geschafft"}</span>
+        <h1 id="result-title">${srsReview ? "Langzeitwissen aufgefrischt!" : focusedPractice ? "Problemwörter geknackt!" : result.maintenance ? "Sicher gelesen!" : `${result.total} Kanji-Wörter sitzen!`}</h1>
+        <p>${srsReview ? "Alle Wörter haben einen neuen, größeren Wiederholungsabstand bekommen." : focusedPractice ? "Bedeutung und Kana-Lesung dieser schwierigen Wörter sind jetzt stärker verknüpft." : result.maintenance ? "Diese Kanji-Wörter sind wieder frisch im Gedächtnis und kehren später erneut zurück." : "Du hast Schreibweise, Bedeutung und Kana-Lesung sicher miteinander verbunden. Die Wörter bleiben in der Langzeit-Wiederholung."}</p>
 
         <div class="learned-word-list learned-kanji-word-list" aria-label="Kanji-Wörter dieser Runde">
           ${words.map((word) => `<span><b lang="ja">${word.spelling}</b><em lang="ja">${word.reading}</em><small>${word.primary}</small></span>`).join("")}
@@ -3965,7 +4200,7 @@ function renderKanjiWordResult() {
 
         <div class="result-actions">
           <button class="secondary-button" type="button" data-action="home">Level & Modus</button>
-          <button class="primary-button" type="button" data-action="${focusedPractice ? "retry-kanji-word-session" : "start-kanji-word-session"}">${focusedPractice ? "Diese Wörter nochmals prüfen" : "Nächste Vierergruppe"} →</button>
+          <button class="primary-button" type="button" data-action="${srsReview ? "start-kanji-word-review" : focusedPractice ? "retry-kanji-word-session" : "start-kanji-word-session"}">${srsReview ? "Weitere fällige Wörter" : focusedPractice ? "Diese Wörter nochmals prüfen" : "Nächste Vierergruppe"} →</button>
         </div>
       </section>
     </div>
@@ -4024,13 +4259,14 @@ function renderKanjiResult() {
     .map((id) => KANJI_BY_ID.get(id))
     .filter(Boolean);
   const learnedTotal = getKanjiStats().learned;
+  const srsReview = result.source === "kanji-review";
   app.innerHTML = `
     <div class="result-view">
       <section class="result-card word-result-card kanji-result-card" aria-labelledby="result-title">
         <div class="result-seal" aria-hidden="true">漢</div>
-        <span class="eyebrow">${result.maintenance ? "Kanji aufgefrischt" : "Kanji-Gruppe geschafft"}</span>
-        <h1 id="result-title">${result.maintenance ? "Sicher wiedererkannt!" : `${result.total} Kanji sitzen!`}</h1>
-        <p>${result.maintenance ? "Diese Zeichen sind wieder frisch im Gedächtnis und kehren später erneut zurück." : "Bedeutung, Lesung und Manga-Kontext sind verknüpft. Die Zeichen werden später automatisch zwischen neue Kanji gemischt."}</p>
+        <span class="eyebrow">${srsReview ? "Fällige Kanji wiederholt" : result.maintenance ? "Kanji aufgefrischt" : "Kanji-Gruppe geschafft"}</span>
+        <h1 id="result-title">${srsReview ? "Langzeitwissen aufgefrischt!" : result.maintenance ? "Sicher wiedererkannt!" : `${result.total} Kanji sitzen!`}</h1>
+        <p>${srsReview ? "Alle Zeichen haben einen neuen Wiederholungstermin. Der Abstand wächst mit jeder sicheren Antwort." : result.maintenance ? "Diese Zeichen sind wieder frisch im Gedächtnis und kehren später erneut zurück." : "Bedeutung, Lesung und Manga-Kontext sind verknüpft. Die Zeichen werden später automatisch zwischen neue Kanji gemischt."}</p>
 
         <div class="learned-word-list learned-kanji-list" aria-label="Kanji dieser Runde">
           ${kanjiItems.map((kanji) => `<span><b lang="ja">${kanji.character}</b><small>${kanji.primary}</small><em lang="ja">${kanji.readings.split("・").slice(0, 2).join("・")}</em></span>`).join("")}
@@ -4044,7 +4280,7 @@ function renderKanjiResult() {
 
         <div class="result-actions">
           <button class="secondary-button" type="button" data-action="home">Level & Modus</button>
-          <button class="primary-button" type="button" data-action="start-kanji-session">Nächste Kanji-Gruppe →</button>
+          <button class="primary-button" type="button" data-action="${srsReview ? "start-kanji-review" : "start-kanji-session"}">${srsReview ? "Weitere fällige Kanji" : "Nächste Kanji-Gruppe"} →</button>
         </div>
       </section>
     </div>
@@ -4384,6 +4620,7 @@ document.addEventListener("click", (event) => {
   }
 
   if (action === "start-session") startSession(getItemsForSelection());
+  if (action === "start-kana-review") startKanaReviewSession();
   if (action === "start-word-session") startWordSession();
   if (action === "start-word-review") startWordReviewSession();
   if (action === "practice-hard-words") startHardWordSession();
@@ -4394,6 +4631,7 @@ document.addEventListener("click", (event) => {
     startWordSession(words, "hard-words");
   }
   if (action === "start-kanji-word-session") startKanjiWordSession();
+  if (action === "start-kanji-word-review") startKanjiWordReviewSession();
   if (action === "practice-hard-kanji-words") startHardKanjiWordSession();
   if (
     action === "retry-kanji-word-session" &&
@@ -4405,6 +4643,7 @@ document.addEventListener("click", (event) => {
     startKanjiWordSession(words, "hard-kanji-words");
   }
   if (action === "start-kanji-session") startKanjiSession();
+  if (action === "start-kanji-review") startKanjiReviewSession();
   if (action === "start-conversation-session") startConversationSession();
   if (action === "start-conversation-review")
     startConversationReviewSession();
@@ -4420,6 +4659,16 @@ document.addEventListener("click", (event) => {
     startConversationSession(conversations, "hard-conversations");
   }
   if (action === "practice-hard") startSession(getHardItems(), "hard");
+  if (action === "start-area-review") {
+    const starters = {
+      kana: startKanaReviewSession,
+      words: startWordReviewSession,
+      kanji: startKanjiReviewSession,
+      "kanji-words": startKanjiWordReviewSession,
+      conversation: startConversationReviewSession,
+    };
+    starters[trigger.dataset.reviewArea]?.();
+  }
   if (action === "quit-session") quitSession();
   if (action === "toggle-mnemonic") {
     const panel = document.querySelector("#kana-mnemonic");
@@ -4529,4 +4778,5 @@ for (const dialog of document.querySelectorAll("dialog")) {
   });
 }
 
+saveData();
 renderHome();

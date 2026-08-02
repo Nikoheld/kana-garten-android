@@ -18,7 +18,8 @@ Eine vollständige, offlinefähige Android-App zum Lesen, Verstehen und Sprechen
 - 50 Gesprächssituationen in sieben Themenbereichen mit Rollenspiel, geführtem Sprechen und Shadowing
 - lokaler Aufnahmevergleich, natürliche Alternativantworten, Sinnabschnitt-Training, Mora-Rhythmus und ehrliche dreistufige Selbsteinschätzung
 - globaler Sprech-Wiederholungstopf unabhängig von der aktuellen Themen- und Levelauswahl
-- zeitbasiertes Spaced Repetition mit wachsenden Abständen von 4 Stunden bis 120 Tagen; unsichere Antworten kommen nach kurzer Zeit erneut
+- ein gemeinsamer Spaced-Repetition-Plan für Kana, Wörter, Kanji, Kanji-Wörter und Gespräche; Kana starten nach 10 Minuten, später wachsen die Abstände bis auf 120 Tage
+- native Lern-Erinnerungen zum nächsten fälligen Termin, auch bei geschlossener App und nach einem Geräteneustart
 - vollständig offline gebündelte Inhalte, Datensätze und Noto Sans JP
 - doppelte Fortschrittssicherung: Web-Speicher plus natives Android-Backup
 - lokales Usage-Dashboard mit Lernzeit pro Tag, Bereich, Woche, Streak, fälligen Reviews und letzten Einheiten
@@ -35,7 +36,7 @@ Die japanische Sprachausgabe nutzt Android Text-to-Speech. Wenn auf einem Gerät
 ## Technik
 
 - Java 17, Android SDK 35, Mindestversion Android 8.0
-- native Android-Views für Dashboard, Navigation, Update-Flow und Widget
+- eigenständiges, touch-orientiertes Mobile-Layout sowie native Android-Views für Dashboard, Navigation, Erinnerungen, Update-Flow und Widget
 - sichere lokale HTTPS-Origin `https://app.local` für die gebündelte Lernoberfläche
 - SharedPreferences für Usage-Daten und natives Fortschritts-Backup
 - Android `DownloadManager` und Paketinstaller für Updates

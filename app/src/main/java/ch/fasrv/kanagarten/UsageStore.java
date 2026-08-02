@@ -146,12 +146,13 @@ public final class UsageStore {
                 if (entries == null) continue;
                 JSONArray names = entries.names();
                 if (names == null) continue;
+                int minimumStrength = "kana".equals(group) ? 1 : 3;
                 for (int i = 0; i < names.length(); i++) {
                     JSONObject stat = entries.optJSONObject(names.optString(i));
                     if (stat == null || Math.max(
                         stat.optInt("strength", 0),
                         stat.optInt("peakStrength", 0)
-                    ) < 3) continue;
+                    ) < minimumStrength) continue;
                     long nextReview = stat.optLong("nextReviewAt", Long.MAX_VALUE);
                     if (nextReview <= now) due++;
                 }
