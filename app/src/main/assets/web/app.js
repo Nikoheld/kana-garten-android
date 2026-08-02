@@ -11,6 +11,11 @@ import {
   CONVERSATION_LEVELS,
   CONVERSATION_TOPICS,
 } from "./conversations.js?v=20260802-speaking-v2";
+import {
+  GRAMMAR,
+  GRAMMAR_CATEGORIES,
+  GRAMMAR_LEVELS,
+} from "./grammar.js?v=20260802-v1";
 import { getKanaMnemonic } from "./mnemonics.js?v=20260723-v2";
 
 const GROUPS = [
@@ -354,15 +359,18 @@ const DEFAULT_DATA = {
   kanji: {},
   kanjiWords: {},
   conversations: {},
+  grammar: {},
   sessions: [],
   wordSessions: [],
   kanjiSessions: [],
   kanjiWordSessions: [],
   conversationSessions: [],
+  grammarSessions: [],
   wordPromptCount: 0,
   kanjiPromptCount: 0,
   kanjiWordPromptCount: 0,
   conversationPromptCount: 0,
+  grammarPromptCount: 0,
   settings: {
     learningMode: "kana",
     mode: "hiragana",
@@ -381,6 +389,10 @@ const DEFAULT_DATA = {
     includedConversationIds: [],
     excludedConversationIds: [],
     conversationPracticeMode: "roleplay",
+    maxGrammarLevel: "N5",
+    selectedGrammarCategories: ["all"],
+    includedGrammarIds: [],
+    excludedGrammarIds: [],
   },
 };
 
@@ -416,6 +428,9 @@ const KANJI_WORD_BY_ID = new Map(
 );
 const CONVERSATION_BY_ID = new Map(
   CONVERSATIONS.map((conversation) => [conversation.id, conversation]),
+);
+const GRAMMAR_BY_ID = new Map(
+  GRAMMAR.map((grammar) => [grammar.id, grammar]),
 );
 const ROMAJI_BY_KANA = new Map(
   ALL_KANA.map((kana) => [kana.glyph, kana.primary]),
@@ -461,6 +476,14 @@ let state = {
   ),
   conversationPracticeMode:
     data.settings.conversationPracticeMode || "roleplay",
+  maxGrammarLevel: data.settings.maxGrammarLevel || "N5",
+  selectedGrammarCategories: new Set(
+    data.settings.selectedGrammarCategories?.length
+      ? data.settings.selectedGrammarCategories
+      : ["all"],
+  ),
+  includedGrammarIds: new Set(data.settings.includedGrammarIds || []),
+  excludedGrammarIds: new Set(data.settings.excludedGrammarIds || []),
   selectedRows: new Set(data.settings.selectedRows?.length ? data.settings.selectedRows : ["vowels"]),
   session: null,
   lastResult: null,
@@ -539,6 +562,7 @@ function loadData() {
       kanji: parsed.kanji || {},
       kanjiWords: parsed.kanjiWords || {},
       conversations: parsed.conversations || {},
+      grammar: parsed.grammar || {},
       sessions: Array.isArray(parsed.sessions) ? parsed.sessions : [],
       wordSessions: Array.isArray(parsed.wordSessions) ? parsed.wordSessions : [],
       kanjiSessions: Array.isArray(parsed.kanjiSessions) ? parsed.kanjiSessions : [],
@@ -547,6 +571,9 @@ function loadData() {
         : [],
       conversationSessions: Array.isArray(parsed.conversationSessions)
         ? parsed.conversationSessions
+        : [],
+      grammarSessions: Array.isArray(parsed.grammarSessions)
+        ? parsed.grammarSessions
         : [],
       settings: {
         ...DEFAULT_DATA.settings,
@@ -568,6 +595,7 @@ function migrateReviewSchedule(progress) {
     ["kanji", 3],
     ["kanjiWords", 3],
     ["conversations", 3],
+    ["grammar", 3],
   ];
   groups.forEach(([group, minimumStrength]) => {
     Object.values(progress[group] || {}).forEach((stat) => {
@@ -606,6 +634,12 @@ function saveData() {
     ...state.excludedConversationIds,
   ];
   data.settings.conversationPracticeMode = state.conversationPracticeMode;
+  data.settings.maxGrammarLevel = state.maxGrammarLevel;
+  data.settings.selectedGrammarCategories = [
+    ...state.selectedGrammarCategories,
+  ];
+  data.settings.includedGrammarIds = [...state.includedGrammarIds];
+  data.settings.excludedGrammarIds = [...state.excludedGrammarIds];
   const serialized = JSON.stringify(data);
   localStorage.setItem(STORAGE_KEY, serialized);
   window.Android?.backupProgress?.(serialized);
@@ -1181,6 +1215,157 @@ function getHardConversations(limit = 20) {
     .slice(0, limit);
 }
 
+function getLevelEligibleGrammar() {
+  const maxIndex = GRAMMAR_LEVELS.findIndex(
+    (level) => level.id === state.maxGrammarLevel,
+  );
+  return GRAMMAR.filter(
+    (grammar) => grammar.levelIndex <= Math.max(0, maxIndex),
+  ).sort((a, b) => a.frequency - b.frequency);
+}
+
+function getSelectedGrammarIdSet() {
+  const eligible = getLevelEligibleGrammar();
+  const selected = new Set(state.includedGrammarIds);
+  if (state.selectedGrammarCategories.has("all")) {
+    eligible.forEach((grammar) => selected.add(grammar.id));
+  } else {
+    eligible
+      .filter((grammar) =>
+        state.selectedGrammarCategories.has(grammar.category),
+      )
+      .forEach((grammar) => selected.add(grammar.id));
+  }
+  state.excludedGrammarIds.forEach((id) => selected.delete(id));
+  return selected;
+}
+
+function getEligibleGrammar() {
+  const selectedIds = getSelectedGrammarIdSet();
+  return getLevelEligibleGrammar().filter((grammar) =>
+    selectedIds.has(grammar.id),
+  );
+}
+
+function getGrammarStrength(grammarId) {
+  return Number(data.grammar[grammarId]?.strength || 0);
+}
+
+function getGrammarLevelStats(levelId) {
+  const topics = GRAMMAR.filter((grammar) => grammar.level === levelId);
+  const learned = topics.filter(
+    (grammar) => getGrammarStrength(grammar.id) >= 3,
+  ).length;
+  const seen = topics.filter(
+    (grammar) => Number(data.grammar[grammar.id]?.seen || 0) > 0,
+  ).length;
+  return { total: topics.length, learned, seen };
+}
+
+function isGrammarReviewDue(grammar) {
+  const stat = data.grammar[grammar.id];
+  if (!stat || Number(stat.peakStrength || 0) < 3) return false;
+  if (stat.nextReviewAt) return Date.now() >= Number(stat.nextReviewAt);
+  return (
+    Number(data.grammarPromptCount || 0) - Number(stat.lastPrompt || 0) >=
+    reviewInterval(stat.strength)
+  );
+}
+
+function getGlobalGrammarReviews(dueOnly = true) {
+  return GRAMMAR.filter((grammar) => {
+    const stat = data.grammar[grammar.id];
+    if (!stat || Number(stat.peakStrength || 0) < 3) return false;
+    return !dueOnly || isGrammarReviewDue(grammar);
+  }).sort((a, b) => {
+    const dueDifference =
+      Number(data.grammar[a.id]?.nextReviewAt || 0) -
+      Number(data.grammar[b.id]?.nextReviewAt || 0);
+    if (dueDifference) return dueDifference;
+    return grammarDifficultyScore(b.id) - grammarDifficultyScore(a.id);
+  });
+}
+
+function getGrammarStats() {
+  const eligible = getEligibleGrammar();
+  const stats = eligible
+    .map((grammar) => data.grammar[grammar.id])
+    .filter(Boolean);
+  const learned = eligible.filter(
+    (grammar) => getGrammarStrength(grammar.id) >= 3,
+  ).length;
+  const seen = stats.reduce((sum, stat) => sum + Number(stat.seen || 0), 0);
+  const correct = stats.reduce(
+    (sum, stat) => sum + Number(stat.correct || 0),
+    0,
+  );
+  return {
+    total: eligible.length,
+    learned,
+    seen,
+    correct,
+    accuracy: formatPercent(correct, seen),
+    reviewDue: getGlobalGrammarReviews().length,
+  };
+}
+
+function recordGrammarAttempt(grammar, wasCorrect) {
+  data.grammarPromptCount = Number(data.grammarPromptCount || 0) + 1;
+  const stat = data.grammar[grammar.id] || {
+    seen: 0,
+    correct: 0,
+    wrong: 0,
+    strength: 0,
+    peakStrength: 0,
+  };
+  stat.seen += 1;
+  stat.lastPracticed = Date.now();
+  stat.lastPrompt = data.grammarPromptCount;
+  if (wasCorrect) {
+    stat.correct += 1;
+    stat.strength = Math.min(10, Number(stat.strength || 0) + 1);
+    stat.peakStrength = Math.max(
+      Number(stat.peakStrength || 0),
+      stat.strength,
+    );
+  } else {
+    stat.wrong += 1;
+    stat.strength = Math.max(0, Number(stat.strength || 0) - 1);
+  }
+  updateNextReview(stat, wasCorrect);
+  data.grammar[grammar.id] = stat;
+  saveData();
+  return stat.strength;
+}
+
+function grammarDifficultyScore(grammarId) {
+  const stat = data.grammar[grammarId];
+  if (!stat || Number(stat.wrong || 0) === 0) return 0;
+  const seen = Math.max(1, Number(stat.seen || 0));
+  const errorRate = Number(stat.wrong || 0) / seen;
+  const strengthGap = Math.max(0, 3 - Number(stat.strength || 0));
+  return (
+    errorRate * 2 +
+    Math.min(1.2, Number(stat.wrong || 0) * 0.18) +
+    strengthGap * 0.22
+  );
+}
+
+function getHardGrammar(limit = 20) {
+  return getEligibleGrammar()
+    .filter((grammar) => grammarDifficultyScore(grammar.id) >= 0.75)
+    .sort((a, b) => {
+      const scoreDifference =
+        grammarDifficultyScore(b.id) - grammarDifficultyScore(a.id);
+      if (scoreDifference) return scoreDifference;
+      return (
+        Number(data.grammar[b.id]?.wrong || 0) -
+        Number(data.grammar[a.id]?.wrong || 0)
+      );
+    })
+    .slice(0, limit);
+}
+
 function reviewInterval(strength) {
   if (strength >= 5) return 30;
   if (strength >= 4) return 18;
@@ -1435,6 +1620,7 @@ function getStreak() {
       ...data.kanjiSessions,
       ...data.kanjiWordSessions,
       ...data.conversationSessions,
+      ...data.grammarSessions,
     ].map(
       (session) => session.date,
     ),
@@ -1472,6 +1658,7 @@ function getReviewOverview() {
     { id: "kanji", label: "Kanji", glyph: "漢", count: getGlobalKanjiReviews().length },
     { id: "kanji-words", label: "Kanji-Wörter", glyph: "熟語", count: getGlobalKanjiWordReviews().length },
     { id: "conversation", label: "Gespräche", glyph: "会話", count: getGlobalConversationReviews().length },
+    { id: "grammar", label: "Grammatik", glyph: "文法", count: getGlobalGrammarReviews().length },
   ];
   return {
     areas,
@@ -1486,6 +1673,7 @@ function getJlptProgress() {
     { items: KANJI_VOCABULARY, stats: data.kanjiWords },
     { items: KANJI, stats: data.kanji },
     { items: CONVERSATIONS, stats: data.conversations },
+    { items: GRAMMAR, stats: data.grammar },
   ];
   const calculate = (targetIndex) => {
     const domainResults = domains.map(({ items, stats }) => {
@@ -1641,8 +1829,9 @@ function renderHome() {
   const isKanji = state.learningMode === "kanji";
   const isKanjiWords = state.learningMode === "kanji-words";
   const isConversation = state.learningMode === "conversation";
+  const isGrammar = state.learningMode === "grammar";
   const isMemoryMode =
-    isKanaWords || isKanji || isKanjiWords || isConversation;
+    isKanaWords || isKanji || isKanjiWords || isConversation || isGrammar;
   const global = getGlobalStats();
   const hardItems = getHardItems();
   const topHard = hardItems.slice(0, 4).map((item) => item.glyph).join(" · ");
@@ -1658,11 +1847,19 @@ function renderHome() {
     .slice(0, 3)
     .map((conversation) => conversation.situation)
     .join(" · ");
+  const hardGrammar = getHardGrammar();
+  const topHardGrammar = hardGrammar
+    .slice(0, 4)
+    .map((grammar) => grammar.pattern)
+    .join(" · ");
   const wordStats = getWordStats();
   const kanjiStats = getKanjiStats();
   const kanjiWordStats = getKanjiWordStats();
   const conversationStats = getConversationStats();
-  const memoryStats = isConversation
+  const grammarStats = getGrammarStats();
+  const memoryStats = isGrammar
+    ? grammarStats
+    : isConversation
     ? conversationStats
     : isKanji
     ? kanjiStats
@@ -1672,6 +1869,8 @@ function renderHome() {
 
   const heroEyebrow = isConversation
     ? "Hören & Sprechen · Alltag bis Fortgeschritten"
+    : isGrammar
+    ? `170 Grammatikthemen · JLPT N5 bis N1`
     : isKanjiWords
     ? "Kanji-Wortschatz · JLPT N5 bis N1"
     : isKanji
@@ -1681,6 +1880,8 @@ function renderHome() {
         : "Kana für Manga lesen";
   const heroTitle = isConversation
     ? "Japanisch, das <em>natürlich klingt.</em>"
+    : isGrammar
+    ? "Grammatik, die du <em>wirklich anwendest.</em>"
     : isKanjiWords
     ? "Kanji-Wörter, die <em>Sinn ergeben.</em>"
     : isKanji
@@ -1690,6 +1891,8 @@ function renderHome() {
         : "Kana, die endlich <em>sitzen.</em>";
   const heroCopy = isConversation
     ? "Trainiere 50 echte Gesprächssituationen als Rollenspiel, geführt oder mit Shadowing. Nimm dich auf, übe einzelne Sinnabschnitte und vergleiche Inhalt, Verständlichkeit und Rhythmus – vom ersten Kennenlernen bis zur differenzierten Diskussion."
+    : isGrammar
+    ? "Lerne 170 zentrale Muster von N5 bis N1 mit klarer Regel, Bildung, Lesung, deutscher Übersetzung und typischer Stolperfalle. Wende jedes Thema direkt im Lückensatz an und behalte es durch gezielte Wiederholungen."
     : isKanjiWords
     ? "Erkenne ganze Wörter mit Kanji, schreibe die deutsche Bedeutung und verknüpfe danach die Kana-Lesung. Von grundlegenden N5-Wörtern bis zu abstraktem N1-Wortschatz."
     : isKanji
@@ -1699,6 +1902,8 @@ function renderHome() {
         : "Trainiere Hiragana und Katakana für Sprechblasen, Namen und Soundeffekte – als einzelne Zeichen oder optional markiert in kurzen Sätzen. Wähle deine Reihen oder starte direkt mit einem Manga-Pfad.";
   const hardTitle = isConversation
     ? "Deine schwierigen Gespräche"
+    : isGrammar
+    ? "Deine schwierigen Grammatikmuster"
     : isKanjiWords
     ? "Deine schwierigen Kanji-Wörter"
     : isKanji
@@ -1710,6 +1915,10 @@ function renderHome() {
     ? hardConversations.length
       ? `${topHardConversations}<br>${hardConversations.length} ${hardConversations.length === 1 ? "Situation braucht" : "Situationen brauchen"} noch Sprechpraxis.`
       : "Noch keine schwierigen Situationen. Unsichere Gespräche werden hier automatisch gesammelt."
+    : isGrammar
+    ? hardGrammar.length
+      ? `${topHardGrammar}<br>${hardGrammar.length} ${hardGrammar.length === 1 ? "Muster braucht" : "Muster brauchen"} noch Extraübung.`
+      : "Noch keine schwierigen Grammatikmuster. Fehler werden hier automatisch gesammelt."
     : isKanjiWords
     ? hardKanjiWords.length
       ? `${topHardKanjiWords}<br>${hardKanjiWords.length} ${hardKanjiWords.length === 1 ? "Wort braucht" : "Wörter brauchen"} noch Extraübung.`
@@ -1727,6 +1936,8 @@ function renderHome() {
           : "Noch keine Problemfälle – das ändert sich beim Üben automatisch.";
   const hardAction = isConversation
     ? "practice-hard-conversations"
+    : isGrammar
+    ? "practice-hard-grammar"
     : isKanjiWords
     ? "practice-hard-kanji-words"
     : isKanji
@@ -1736,6 +1947,8 @@ function renderHome() {
         : "practice-hard";
   const hardDisabled = isConversation
     ? hardConversations.length === 0
+    : isGrammar
+    ? hardGrammar.length === 0
     : isKanjiWords
     ? hardKanjiWords.length === 0
     : isKanaWords
@@ -1743,6 +1956,8 @@ function renderHome() {
       : !isMemoryMode && hardItems.length === 0;
   const hardLabel = isConversation
     ? "Schwierige Gespräche üben"
+    : isGrammar
+    ? "Schwierige Grammatik üben"
     : isKanjiWords
     ? "Schwierige Kanji-Wörter üben"
     : isKanji
@@ -1752,6 +1967,8 @@ function renderHome() {
         : "Schwierige Kana üben";
   const totalUnit = isConversation
     ? " Gesprächen"
+    : isGrammar
+      ? " Grammatikthemen"
     : isKanji
       ? " Kanji"
       : isKanjiWords
@@ -1759,7 +1976,7 @@ function renderHome() {
         : " Wörtern";
 
   app.innerHTML = `
-    <div class="home-view${isConversation ? " conversation-home" : ""}">
+    <div class="home-view${isConversation ? " conversation-home" : ""}${isGrammar ? " grammar-home" : ""}">
       <nav class="learning-mode-switcher" aria-label="Lernmodus">
         <button class="${isMemoryMode ? "" : "active"}" type="button" data-action="set-learning-mode" data-learning-mode="kana" aria-pressed="${!isMemoryMode}">
           <span aria-hidden="true">あ</span>
@@ -1781,6 +1998,10 @@ function renderHome() {
           <span aria-hidden="true">会話</span>
           <span><strong>Gespräche</strong><small>Hören · Sprechen · Tonhöhe</small></span>
         </button>
+        <button class="${isGrammar ? "active" : ""}" type="button" data-action="set-learning-mode" data-learning-mode="grammar" aria-pressed="${isGrammar}">
+          <span aria-hidden="true">文法</span>
+          <span><strong>Grammatik</strong><small>JLPT N5–N1 · Regel → Anwendung</small></span>
+        </button>
       </nav>
 
       ${renderReviewOverview()}
@@ -1796,8 +2017,8 @@ function renderHome() {
         <div class="hero-aside" aria-hidden="true">
           <div class="kana-orbit">
             <div class="brush-circle"></div>
-            <div class="kana-card${isKanaWords || isKanjiWords || isConversation ? " word-card" : ""}${isKanji ? " kanji-card" : ""}${isKanjiWords ? " kanji-word-card" : ""}">${isConversation ? "会話" : isKanjiWords ? "日本" : isKanji ? "力" : isKanaWords ? "みず" : "あ"}</div>
-            <div class="kana-card${isKanaWords || isKanjiWords || isConversation ? " word-card" : ""}${isKanji ? " kanji-card" : ""}${isKanjiWords ? " kanji-word-card" : ""}">${isConversation ? "発音" : isKanjiWords ? "運命" : isKanji ? "夢" : isKanaWords ? "ねこ" : "カ"}</div>
+            <div class="kana-card${isKanaWords || isKanjiWords || isConversation || isGrammar ? " word-card" : ""}${isKanji ? " kanji-card" : ""}${isKanjiWords ? " kanji-word-card" : ""}">${isGrammar ? "〜ため" : isConversation ? "会話" : isKanjiWords ? "日本" : isKanji ? "力" : isKanaWords ? "みず" : "あ"}</div>
+            <div class="kana-card${isKanaWords || isKanjiWords || isConversation || isGrammar ? " word-card" : ""}${isKanji ? " kanji-card" : ""}${isKanjiWords ? " kanji-word-card" : ""}">${isGrammar ? "〜のに" : isConversation ? "発音" : isKanjiWords ? "運命" : isKanji ? "夢" : isKanaWords ? "ねこ" : "カ"}</div>
             <div class="kana-card">?</div>
           </div>
         </div>
@@ -1821,7 +2042,7 @@ function renderHome() {
         </article>
       </section>
 
-      ${isConversation ? renderConversationSetup() : isKanjiWords ? renderKanjiWordSetup() : isKanji ? renderKanjiSetup() : isKanaWords ? renderWordSetup() : renderKanaSetup()}
+      ${isGrammar ? renderGrammarSetup() : isConversation ? renderConversationSetup() : isKanjiWords ? renderKanjiWordSetup() : isKanji ? renderKanjiSetup() : isKanaWords ? renderWordSetup() : renderKanaSetup()}
     </div>
   `;
 
@@ -1844,6 +2065,136 @@ function renderSentenceModeChoice(kind, sentenceMode) {
         <button type="button" role="radio" aria-checked="${sentenceMode}" class="${sentenceMode ? "active" : ""}" data-action="set-${kind}-sentence-mode" data-sentence-mode="true"><span>…${isKana ? "あ" : "漢"}…</span><strong>Im Satz</strong></button>
       </div>
     </div>
+  `;
+}
+
+function renderGrammarSetup() {
+  const topics = getEligibleGrammar();
+  const pickerTopics = getLevelEligibleGrammar();
+  const selectedIds = getSelectedGrammarIdSet();
+  const dueTopics = getGlobalGrammarReviews();
+  const learnedTopics = getGlobalGrammarReviews(false);
+  const maxLevelIndex = GRAMMAR_LEVELS.findIndex(
+    (level) => level.id === state.maxGrammarLevel,
+  );
+  return `
+    <section class="setup word-setup grammar-setup" id="setup" aria-labelledby="setup-title">
+      <div class="section-heading">
+        <div>
+          <span class="eyebrow">170 zentrale Muster · komplett offline</span>
+          <h2 id="setup-title">Von der Regel zur sicheren Anwendung.</h2>
+        </div>
+        <p>Wähle dein maximales JLPT-Level, ganze Themenbereiche oder einzelne Lektionen. Einfachere und häufigere Strukturen kommen zuerst.</p>
+      </div>
+
+      <div class="srs-pot-card grammar-srs-card">
+        <div class="srs-pot-icon" aria-hidden="true">文</div>
+        <div>
+          <span class="eyebrow">Grammatik-Langzeitgedächtnis</span>
+          <strong>${dueTopics.length ? dueTopics.length === 1 ? "1 Grammatikmuster ist fällig." : `${dueTopics.length} Grammatikmuster sind fällig.` : "Gerade ist alles frisch."}</strong>
+          <p>${learnedTopics.length} sicher angewendete Muster bleiben im globalen Wiederholungsplan – unabhängig von deiner aktuellen Auswahl.</p>
+        </div>
+        <button class="secondary-button" type="button" data-action="start-grammar-review" ${dueTopics.length ? "" : "disabled"}>${dueTopics.length ? "Fällige wiederholen" : "Nichts fällig"}</button>
+      </div>
+
+      <div class="grammar-method-card" aria-label="Ablauf einer Grammatiklektion">
+        <span aria-hidden="true">1</span><div><strong>Verstehen</strong><small>Regel, Bildung und Beispiel</small></div>
+        <i aria-hidden="true">→</i>
+        <span aria-hidden="true">2</span><div><strong>Anwenden</strong><small>Das passende Muster einsetzen</small></div>
+        <i aria-hidden="true">→</i>
+        <span aria-hidden="true">3</span><div><strong>Behalten</strong><small>Fehler wiederholen, Sicheres später abrufen</small></div>
+      </div>
+
+      <div class="jlpt-word-path grammar-level-path" role="radiogroup" aria-label="Maximales JLPT-Grammatiklevel">
+        ${GRAMMAR_LEVELS.map((level, levelIndex) => {
+          const active = state.maxGrammarLevel === level.id;
+          const included = levelIndex <= maxLevelIndex;
+          const levelTopics = GRAMMAR.filter(
+            (grammar) => grammar.level === level.id,
+          );
+          const stats = getGrammarLevelStats(level.id);
+          const preview = levelTopics
+            .slice(0, 4)
+            .map((grammar) => grammar.pattern)
+            .join(" · ");
+          const progress = stats.total
+            ? Math.round((stats.learned / stats.total) * 100)
+            : 0;
+          return `
+            <button class="word-level-row grammar-level-row${included ? " included" : ""}${active ? " active" : ""}" type="button" role="radio" aria-checked="${active}" data-action="set-grammar-level" data-level="${level.id}">
+              <span class="word-level-step"><b>${level.label}</b><small>${levelIndex === 0 ? "Fundament" : levelIndex === GRAMMAR_LEVELS.length - 1 ? "Meisterstufe" : `Stufe ${levelIndex + 1}`}</small></span>
+              <span class="word-level-copy"><strong>${level.description}</strong><small>${levelTopics.length} Grammatikthemen</small><em lang="ja">${preview}</em></span>
+              <span class="word-level-progress"><span><b>${stats.learned}</b> / ${stats.total} sicher</span><i><u style="width:${progress}%"></u></i></span>
+              <span class="word-level-state">${active ? "Dein Ziel" : included ? "Enthalten" : "Als Ziel wählen"}</span>
+            </button>
+          `;
+        }).join("")}
+      </div>
+
+      <div class="grammar-selection-heading">
+        <div><span class="eyebrow">Themenbereiche</span><h3>Was möchtest du verstehen?</h3></div>
+        <div class="scenario-selection-actions">
+          <button type="button" data-action="select-all-grammar">Alle auswählen</button>
+          <button type="button" data-action="clear-grammar-selection">Auswahl leeren</button>
+        </div>
+      </div>
+
+      <div class="grammar-category-grid" role="group" aria-label="Grammatikbereiche wählen">
+        <button class="grammar-category-card${state.selectedGrammarCategories.has("all") ? " active" : ""}" type="button" data-action="toggle-grammar-category" data-category="all" aria-pressed="${state.selectedGrammarCategories.has("all")}">
+          <span aria-hidden="true">全</span><strong>Alle Themen</strong><small>${pickerTopics.length} bis ${state.maxGrammarLevel}</small><b>${state.selectedGrammarCategories.has("all") ? "✓" : "+"}</b>
+        </button>
+        ${GRAMMAR_CATEGORIES.map((category) => {
+          const categoryTopics = pickerTopics.filter(
+            (grammar) => grammar.category === category.id,
+          );
+          const active = state.selectedGrammarCategories.has(category.id);
+          return `
+            <button class="grammar-category-card${active ? " active" : ""}" type="button" data-action="toggle-grammar-category" data-category="${category.id}" aria-pressed="${active}">
+              <span aria-hidden="true">${category.glyph}</span><strong>${category.label}</strong><small>${categoryTopics.length} Themen · ${category.description}</small><b>${active ? "✓" : "+"}</b>
+            </button>
+          `;
+        }).join("")}
+      </div>
+
+      <details class="individual-word-picker grammar-topic-picker">
+        <summary><span><strong>Einzelne Grammatikthemen auswählen</strong><small>${pickerTopics.length} Lektionen bis ${state.maxGrammarLevel} · jederzeit einzeln an- oder abwählbar</small></span><b>Öffnen</b></summary>
+        <div class="word-picker-tools">
+          <label for="grammar-search">Thema suchen</label>
+          <input id="grammar-search" type="search" placeholder="Muster, Titel oder Bedeutung …" autocomplete="off">
+        </div>
+        <div class="individual-grammar-grid" id="individual-grammar-grid">
+          ${pickerTopics.map((grammar) => {
+            const selected = selectedIds.has(grammar.id);
+            const strength = getGrammarStrength(grammar.id);
+            return `
+              <button class="individual-grammar${selected ? " selected" : ""}" type="button" data-action="toggle-grammar" data-grammar="${grammar.id}" data-search="${`${grammar.pattern} ${grammar.title} ${grammar.summary} ${grammar.german}`.toLowerCase()}">
+                <span class="individual-grammar-check" aria-hidden="true">${selected ? "✓" : "+"}</span>
+                <b lang="ja">${grammar.pattern}</b>
+                <strong>${grammar.title}</strong>
+                <small>${grammar.level} · ${GRAMMAR_CATEGORIES.find((category) => category.id === grammar.category)?.label || "Grammatik"}</small>
+                <em aria-label="Lernstärke ${Math.min(3, strength)} von 3">${[1, 2, 3].map((step) => `<i class="${step <= strength ? "filled" : ""}"></i>`).join("")}</em>
+              </button>
+            `;
+          }).join("")}
+        </div>
+        <p class="word-search-empty" id="grammar-search-empty" hidden>Kein passendes Grammatikthema gefunden.</p>
+      </details>
+
+      <div class="cycle-explainer grammar-cycle-explainer">
+        <div class="cycle-visual grammar-cycle-visual" aria-hidden="true"><span>〜から</span><span>〜のに</span><span>〜ように</span><span>〜わけ</span></div>
+        <div>
+          <strong>Vier aktive Themen – erst verstehen, dann abrufen.</strong>
+          <p>Neue Muster starten mit einer kompakten Lernkarte. Jede richtige Anwendung stärkt sie; Fehler erscheinen später erneut. Nach drei sicheren Treffern wandern sie in die Langzeitwiederholung.</p>
+        </div>
+      </div>
+
+      <p class="grammar-jlpt-note">Die Zuordnung ist JLPT-orientiert. Der JLPT veröffentlicht keine verbindliche Grammatikliste; deshalb deckt der Pfad die in etablierten Lehrwerken und Prüfungsvorbereitungen üblichen Kernmuster ab.</p>
+
+      <div class="start-bar">
+        <div class="selection-count"><strong>${topics.length}</strong> <span>Grammatikthemen ausgewählt · bis ${state.maxGrammarLevel}</span></div>
+        <button class="primary-button" type="button" data-action="start-grammar-session" ${topics.length ? "" : "disabled"}>Grammatik lernen <span aria-hidden="true">→</span></button>
+      </div>
+    </section>
   `;
 }
 
@@ -3758,6 +4109,384 @@ function finishConversationSession() {
   renderConversationResult();
 }
 
+function startGrammarSession(grammarPool = null, sourceOverride = null) {
+  const focusedPractice = Array.isArray(grammarPool);
+  const eligible = focusedPractice ? grammarPool : getEligibleGrammar();
+  const weakTopics = eligible.filter(
+    (grammar) => getGrammarStrength(grammar.id) < 3,
+  );
+  const maintenance = !focusedPractice && weakTopics.length === 0;
+  const candidates = focusedPractice
+    ? eligible
+    : maintenance
+      ? [...eligible].sort(
+          (a, b) =>
+            Number(data.grammar[a.id]?.lastPrompt || 0) -
+            Number(data.grammar[b.id]?.lastPrompt || 0),
+        )
+      : weakTopics;
+  const cycleTopics = candidates.slice(0, 4);
+  if (!focusedPractice && !maintenance && cycleTopics.length < 3) {
+    const cycleIds = new Set(cycleTopics.map((grammar) => grammar.id));
+    const fillers = eligible
+      .filter(
+        (grammar) =>
+          !cycleIds.has(grammar.id) && getGrammarStrength(grammar.id) >= 3,
+      )
+      .sort(
+        (a, b) =>
+          Number(data.grammar[a.id]?.lastPrompt || 0) -
+          Number(data.grammar[b.id]?.lastPrompt || 0),
+      );
+    cycleTopics.push(...fillers.slice(0, 3 - cycleTopics.length));
+  }
+  if (!cycleTopics.length) {
+    showToast("Wähle mindestens ein Grammatikthema aus.");
+    return;
+  }
+
+  clearTimeout(state.timer);
+  state.session = {
+    kind: "grammar",
+    source:
+      sourceOverride || (maintenance ? "maintenance" : "grammar-cycle"),
+    maxLevel: state.maxGrammarLevel,
+    cycleIds: cycleTopics.map((grammar) => grammar.id),
+    itemIds: cycleTopics.map((grammar) => grammar.id),
+    queue: shuffle(cycleTopics.map((grammar) => grammar.id)),
+    currentId: null,
+    mastered: new Set(),
+    reviewedIds: new Set(),
+    introducedIds: new Set(),
+    maintenance,
+    reviewOnly: sourceOverride === "grammar-review",
+    attempts: 0,
+    correctAttempts: 0,
+    wrongAttempts: 0,
+    mistakesById: {},
+    startedAt: Date.now(),
+    locked: false,
+    awaitingAdvance: false,
+    phase: "quiz",
+  };
+  state.view = "quiz";
+  advanceGrammarSession();
+}
+
+function startGrammarReviewSession() {
+  const dueTopics = getGlobalGrammarReviews().slice(0, 20);
+  if (!dueTopics.length) {
+    showToast("Gerade ist keine Grammatik-Wiederholung fällig.");
+    return;
+  }
+  startGrammarSession(dueTopics, "grammar-review");
+}
+
+function startHardGrammarSession() {
+  const topics = getHardGrammar();
+  if (!topics.length) {
+    showToast("Noch keine schwierigen Grammatikmuster gespeichert.");
+    return;
+  }
+  startGrammarSession(topics.slice(0, 4), "hard-grammar");
+}
+
+function advanceGrammarSession() {
+  const session = state.session;
+  if (!session || session.kind !== "grammar") return;
+  if (session.queue.length === 0) {
+    const cycleComplete = session.cycleIds.every((id) =>
+      session.mastered.has(id),
+    );
+    if (cycleComplete) {
+      finishGrammarSession();
+      return;
+    }
+    session.queue = shuffle(
+      session.cycleIds.filter((id) => !session.mastered.has(id)),
+    );
+  }
+  session.currentId = session.queue.shift();
+  session.locked = false;
+  session.awaitingAdvance = false;
+  const isNew =
+    getGrammarStrength(session.currentId) === 0 &&
+    !session.reviewOnly &&
+    !session.introducedIds.has(session.currentId);
+  session.phase = isNew ? "lesson" : "quiz";
+  renderGrammarQuiz();
+}
+
+function insertGrammarLater(grammarId, minDistance = 2) {
+  const session = state.session;
+  if (
+    !session ||
+    session.kind !== "grammar" ||
+    session.queue.includes(grammarId)
+  ) {
+    return;
+  }
+  const minIndex = Math.min(minDistance, session.queue.length);
+  const maxIndex = Math.min(minDistance + 2, session.queue.length);
+  const insertionIndex =
+    minIndex + Math.floor(Math.random() * (maxIndex - minIndex + 1));
+  session.queue.splice(insertionIndex, 0, grammarId);
+}
+
+function maybeInsertGrammarReview() {
+  const session = state.session;
+  if (!session || session.kind !== "grammar") return;
+  if (session.reviewOnly || session.source === "hard-grammar") return;
+  const excluded = new Set([
+    ...session.cycleIds,
+    ...session.queue,
+    ...session.reviewedIds,
+    session.currentId,
+  ]);
+  const review = getGlobalGrammarReviews()
+    .filter((grammar) => !excluded.has(grammar.id))
+    .sort(
+      (a, b) =>
+        Number(data.grammar[a.id]?.lastPrompt || 0) -
+        Number(data.grammar[b.id]?.lastPrompt || 0),
+    )[0];
+  if (review) insertGrammarLater(review.id, 2);
+}
+
+function grammarStrengthDots(strength) {
+  const safeStrength = Math.min(3, Math.max(0, Number(strength || 0)));
+  return `
+    <span class="confidence-label">${safeStrength >= 3 ? "Sicher" : safeStrength ? "Im Aufbau" : "Neu"}</span>
+    <span class="confidence-dots" aria-label="${safeStrength} von 3 sicheren Anwendungen">
+      ${[1, 2, 3].map((step) => `<i class="${step <= safeStrength ? "filled" : ""}"></i>`).join("")}
+    </span>
+  `;
+}
+
+function renderGrammarExplanation(grammar, compact = false) {
+  return `
+    <div class="grammar-explanation${compact ? " compact" : ""}">
+      <div class="grammar-rule-grid">
+        <div><small>Bedeutung</small><strong>${grammar.summary}</strong></div>
+        <div><small>Bildung</small><strong lang="ja">${grammar.formation}</strong></div>
+      </div>
+      <div class="grammar-example-block">
+        <small>Natürliches Beispiel</small>
+        <strong lang="ja">${grammar.example}</strong>
+        <span lang="ja">${grammar.reading}</span>
+        <em>${grammar.german}</em>
+      </div>
+      <div class="grammar-pitfall"><span aria-hidden="true">!</span><div><small>Typische Stolperfalle</small><strong>${grammar.pitfall}</strong></div></div>
+    </div>
+  `;
+}
+
+function renderGrammarQuiz() {
+  const session = state.session;
+  if (!session || session.kind !== "grammar") return;
+  const grammar = GRAMMAR_BY_ID.get(session.currentId);
+  if (!grammar) return;
+  const isReview =
+    session.reviewOnly || !session.cycleIds.includes(grammar.id);
+  const focusedPractice = session.source === "hard-grammar";
+  const total = session.cycleIds.length;
+  const mastered = session.mastered.size;
+  const accuracy = formatPercent(session.correctAttempts, session.attempts);
+  const strength = getGrammarStrength(grammar.id);
+  const category = GRAMMAR_CATEGORIES.find(
+    (entry) => entry.id === grammar.category,
+  );
+
+  document.body.classList.add("is-quizzing");
+  app.innerHTML = `
+    <div class="quiz-view grammar-quiz-view">
+      <div class="quiz-top">
+        <button class="icon-button" type="button" data-action="quit-session"><span aria-hidden="true">←</span> Beenden</button>
+        <div class="progress-wrap" aria-label="${mastered} von ${total} Grammatikthemen sicher">
+          <div class="progress-track"><div class="progress-fill grammar-progress" style="width: ${(mastered / total) * 100}%"></div></div>
+          <span class="progress-label">${mastered} / ${total}</span>
+        </div>
+        <div class="quiz-stats">
+          <div class="quiz-stat"><span>Gruppe</span><strong>${total} Themen</strong></div>
+          <div class="quiz-stat"><span>Genauigkeit</span><strong>${accuracy}</strong></div>
+          <div class="quiz-stat"><span>Fehler</span><strong>${session.wrongAttempts}</strong></div>
+        </div>
+      </div>
+
+      ${session.phase === "lesson" ? `
+        <section class="grammar-lesson-stage" aria-labelledby="grammar-lesson-title">
+          <div class="word-cycle-badge grammar-badge">Neu · ${grammar.level} · ${category?.label || "Grammatik"}</div>
+          <div class="grammar-pattern-heading">
+            <span lang="ja">${grammar.pattern}</span>
+            <div><small>Neues Grammatikmuster</small><h1 id="grammar-lesson-title">${grammar.title}</h1></div>
+          </div>
+          ${renderGrammarExplanation(grammar)}
+          <button class="primary-button grammar-start-exercise" type="button" data-action="start-grammar-exercise">Jetzt im Satz anwenden <span aria-hidden="true">→</span></button>
+          <p class="keyboard-note">Enter startet die Aufgabe</p>
+        </section>
+      ` : `
+        <section class="quiz-stage grammar-quiz-stage" aria-labelledby="grammar-quiz-prompt">
+          <div class="word-cycle-badge grammar-badge${isReview ? " review" : ""}${focusedPractice ? " hard-word-badge" : ""}">${focusedPractice ? `◆ Schwierige Grammatik · ${grammar.level}` : isReview ? "↻ Langzeit-Wiederholung" : `${grammar.level} · ${category?.label || "Grammatik"}`}</div>
+          <div class="grammar-quiz-heading">
+            <span lang="ja">${grammar.pattern}</span>
+            <div><small>${grammar.title}</small><div class="word-confidence grammar-confidence">${grammarStrengthDots(strength)}</div></div>
+          </div>
+          <p class="quiz-prompt" id="grammar-quiz-prompt">Welches Muster vervollständigt den Satz?</p>
+          <div class="grammar-cloze-card" lang="ja"><span>${grammar.prompt.replace("＿＿", '<mark aria-label="Lücke">＿＿</mark>')}</span></div>
+          <div class="grammar-choice-grid" role="group" aria-label="Antwortmöglichkeiten">
+            ${grammar.choices.map((choice, index) => `<button type="button" data-action="answer-grammar" data-choice="${choice}" data-choice-index="${index}"><span>${index + 1}</span><strong lang="ja">${choice}</strong></button>`).join("")}
+          </div>
+          <button class="grammar-rule-toggle" type="button" data-action="toggle-grammar-rule" aria-expanded="false"><span aria-hidden="true">?</span> Regel und Beispiel ansehen</button>
+          <div class="grammar-rule-drawer" hidden>${renderGrammarExplanation(grammar, true)}</div>
+          <div class="grammar-answer-feedback" aria-live="polite" hidden>
+            <div class="grammar-answer-state"><span aria-hidden="true">✓</span><div><small>Richtige Lösung</small><strong lang="ja">${grammar.prompt.replace("＿＿", grammar.answer)}</strong></div></div>
+            ${renderGrammarExplanation(grammar, true)}
+            <button class="primary-button grammar-continue-button" type="button" data-action="continue-grammar">Weiter <span>Enter ↵</span></button>
+          </div>
+          <p class="queue-note"><span aria-hidden="true">文</span> Neue Muster brauchen drei sichere Anwendungen. Nach der Antwort bleibt die Erklärung sichtbar.</p>
+        </section>
+      `}
+    </div>
+  `;
+  window.scrollTo({ top: 0, behavior: "instant" });
+  requestAnimationFrame(() => {
+    const focusTarget = document.querySelector(
+      session.phase === "lesson"
+        ? ".grammar-start-exercise"
+        : ".grammar-choice-grid button",
+    );
+    focusTarget?.focus({ preventScroll: true });
+  });
+}
+
+function startGrammarExercise() {
+  const session = state.session;
+  if (!session || session.kind !== "grammar") return;
+  session.introducedIds.add(session.currentId);
+  session.phase = "quiz";
+  renderGrammarQuiz();
+}
+
+function submitGrammarAnswer(choice) {
+  const session = state.session;
+  if (
+    !session ||
+    session.kind !== "grammar" ||
+    session.phase !== "quiz" ||
+    session.locked
+  ) {
+    return;
+  }
+  const grammar = GRAMMAR_BY_ID.get(session.currentId);
+  const wasCorrect = choice === grammar.answer;
+  const isReview =
+    session.reviewOnly || !session.cycleIds.includes(grammar.id);
+  session.locked = true;
+  session.awaitingAdvance = true;
+  session.attempts += 1;
+  if (wasCorrect) session.correctAttempts += 1;
+  else {
+    session.wrongAttempts += 1;
+    session.mistakesById[grammar.id] =
+      (session.mistakesById[grammar.id] || 0) + 1;
+  }
+  const newStrength = recordGrammarAttempt(grammar, wasCorrect);
+
+  if (isReview) {
+    if (wasCorrect) {
+      session.reviewedIds.add(grammar.id);
+      if (session.reviewOnly) session.mastered.add(grammar.id);
+    } else {
+      insertGrammarLater(grammar.id, 2);
+    }
+  } else if (wasCorrect && (session.maintenance || newStrength >= 3)) {
+    session.mastered.add(grammar.id);
+  } else {
+    insertGrammarLater(grammar.id, 2);
+  }
+
+  document.querySelectorAll(".grammar-choice-grid button").forEach((button) => {
+    button.disabled = true;
+    if (button.dataset.choice === grammar.answer)
+      button.classList.add("correct");
+    else if (button.dataset.choice === choice)
+      button.classList.add("wrong");
+  });
+  const feedback = document.querySelector(".grammar-answer-feedback");
+  const stateRow = feedback?.querySelector(".grammar-answer-state");
+  if (feedback) feedback.hidden = false;
+  if (stateRow) {
+    stateRow.classList.toggle("wrong", !wasCorrect);
+    const icon = stateRow.querySelector(":scope > span");
+    const label = stateRow.querySelector("small");
+    if (icon) icon.textContent = wasCorrect ? "✓" : "×";
+    if (label) {
+      label.textContent = wasCorrect
+        ? !isReview && !session.maintenance && newStrength < 3
+          ? `Richtig · noch ${3 - newStrength}× sicher anwenden`
+          : "Richtig angewendet"
+        : "Noch nicht · richtige Lösung";
+    }
+  }
+  document.querySelector(".grammar-rule-toggle")?.setAttribute("hidden", "");
+  document.querySelector(".grammar-rule-drawer")?.setAttribute("hidden", "");
+  requestAnimationFrame(() => {
+    feedback?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    document
+      .querySelector(".grammar-continue-button")
+      ?.focus({ preventScroll: true });
+  });
+}
+
+function continueGrammarSession() {
+  const session = state.session;
+  if (
+    !session ||
+    session.kind !== "grammar" ||
+    !session.awaitingAdvance
+  ) {
+    return;
+  }
+  session.awaitingAdvance = false;
+  maybeInsertGrammarReview();
+  advanceGrammarSession();
+}
+
+function finishGrammarSession() {
+  const session = state.session;
+  if (!session || session.kind !== "grammar") return;
+  const durationSeconds = Math.max(
+    1,
+    Math.round((Date.now() - session.startedAt) / 1000),
+  );
+  const result = {
+    kind: "grammar",
+    source: session.source,
+    itemIds: [...session.cycleIds],
+    total: session.cycleIds.length,
+    attempts: session.attempts,
+    correctAttempts: session.correctAttempts,
+    wrongAttempts: session.wrongAttempts,
+    mistakesById: { ...session.mistakesById },
+    accuracy: formatPercent(session.correctAttempts, session.attempts),
+    durationSeconds,
+    maintenance: session.maintenance,
+  };
+  notifyAndroidSession("grammar", durationSeconds, result.total);
+  data.grammarSessions.push({
+    date: localDateKey(),
+    total: result.total,
+    attempts: result.attempts,
+    wrong: result.wrongAttempts,
+  });
+  data.grammarSessions = data.grammarSessions.slice(-365);
+  saveData();
+  state.lastResult = result;
+  state.session = null;
+  state.view = "result";
+  renderGrammarResult();
+}
+
 function startKanjiSession(kanjiPool = null, sourceOverride = null) {
   const focusedPractice = Array.isArray(kanjiPool);
   const eligible = focusedPractice ? kanjiPool : getEligibleKanji();
@@ -4187,6 +4916,7 @@ function renderQuiz() {
   if (session.kind === "kanji-words") return renderKanjiWordQuiz();
   if (session.kind === "kanji") return renderKanjiQuiz();
   if (session.kind === "conversation") return renderConversationQuiz();
+  if (session.kind === "grammar") return renderGrammarQuiz();
   const kana = KANA_BY_ID.get(session.currentId);
   const mnemonic = getKanaMnemonic(kana);
   const sentenceContext = session.sentenceMode
@@ -4380,6 +5110,7 @@ function renderResult() {
   if (result.kind === "kanji-words") return renderKanjiWordResult();
   if (result.kind === "kanji") return renderKanjiResult();
   if (result.kind === "conversation") return renderConversationResult();
+  if (result.kind === "grammar") return renderGrammarResult();
   document.body.classList.remove("is-quizzing");
   const difficultIds = Object.entries(result.mistakesById)
     .sort(([, a], [, b]) => b - a)
@@ -4545,6 +5276,44 @@ function renderConversationResult() {
   window.scrollTo({ top: 0, behavior: "instant" });
 }
 
+function renderGrammarResult() {
+  const result = state.lastResult;
+  if (!result || result.kind !== "grammar") return renderHome();
+  document.body.classList.remove("is-quizzing");
+  const topics = result.itemIds
+    .map((id) => GRAMMAR_BY_ID.get(id))
+    .filter(Boolean);
+  const learnedTotal = getGlobalGrammarReviews(false).length;
+  const focusedPractice = result.source === "hard-grammar";
+  const reviewPractice = result.source === "grammar-review";
+  app.innerHTML = `
+    <div class="result-view">
+      <section class="result-card word-result-card grammar-result-card" aria-labelledby="result-title">
+        <div class="result-seal" aria-hidden="true">文</div>
+        <span class="eyebrow">${reviewPractice ? "Fällige Grammatik wiederholt" : focusedPractice ? "Schwierige Muster trainiert" : result.maintenance ? "Grammatik aufgefrischt" : "Grammatikgruppe geschafft"}</span>
+        <h1 id="result-title">${reviewPractice ? "Langzeitwissen aufgefrischt!" : focusedPractice ? "Grammatikhürden geknackt!" : result.maintenance ? "Sicher angewendet!" : `${result.total} Muster sitzen!`}</h1>
+        <p>${reviewPractice ? "Alle fälligen Muster haben einen neuen Wiederholungstermin. Der Abstand wächst mit jeder sicheren Anwendung." : focusedPractice ? "Du hast gezielt die Strukturen wiederholt, bei denen Bedeutung oder Bildung noch unsicher waren." : result.maintenance ? "Diese Regeln sind wieder frisch und kehren später erneut in einer passenden Lückensatz-Aufgabe zurück." : "Regel, Bildung und Satzanwendung sind jetzt verknüpft. Die Themen bleiben dauerhaft in deiner Langzeit-Wiederholung."}</p>
+
+        <div class="learned-word-list grammar-result-list" aria-label="Grammatikthemen dieser Runde">
+          ${topics.map((grammar) => `<span><b lang="ja">${grammar.pattern}</b><small>${grammar.title}</small><em>${grammar.level}</em></span>`).join("")}
+        </div>
+
+        <div class="result-stats">
+          <div class="result-stat"><strong>${learnedTotal}</strong><span>Insgesamt sicher</span></div>
+          <div class="result-stat"><strong>${result.accuracy}</strong><span>Genauigkeit</span></div>
+          <div class="result-stat"><strong>${formatDuration(result.durationSeconds)}</strong><span>Zeit</span></div>
+        </div>
+
+        <div class="result-actions">
+          <button class="secondary-button" type="button" data-action="home">Level & Themen wählen</button>
+          <button class="primary-button" type="button" data-action="${reviewPractice ? "start-grammar-review" : focusedPractice ? "retry-grammar-session" : "start-grammar-session"}">${reviewPractice ? "Weitere fällige Grammatik" : focusedPractice ? "Diese Muster nochmals" : "Nächste Vierergruppe"} →</button>
+        </div>
+      </section>
+    </div>
+  `;
+  window.scrollTo({ top: 0, behavior: "instant" });
+}
+
 function renderKanjiResult() {
   const result = state.lastResult;
   if (!result || result.kind !== "kanji") return renderHome();
@@ -4607,7 +5376,7 @@ function quitSession() {
 function resetProgress() {
   requestConfirmation({
     title: "Fortschritt zurücksetzen?",
-    message: "Alle Treffer, schwierigen Kana, Kana-Wörter, Kanji, Kanji-Wörter, Gespräche und abgeschlossenen Lerneinheiten werden unwiderruflich gelöscht.",
+    message: "Alle Treffer, schwierigen Kana, Wörter, Kanji, Gespräche, Grammatikthemen und abgeschlossenen Lerneinheiten werden unwiderruflich gelöscht.",
     acceptLabel: "Alles zurücksetzen",
     onAccept: () => {
       clearTimeout(state.timer);
@@ -4623,6 +5392,10 @@ function resetProgress() {
       state.maxKanjiLevel = "N5";
       state.maxKanjiWordLevel = "N5";
       state.maxConversationLevel = "N5";
+      state.maxGrammarLevel = "N5";
+      state.selectedGrammarCategories = new Set(["all"]);
+      state.includedGrammarIds = new Set();
+      state.excludedGrammarIds = new Set();
       state.selectedRows = new Set(["vowels"]);
       state.session = null;
       state.lastResult = null;
@@ -4659,6 +5432,27 @@ function refreshWordSelectionControls() {
   const count = document.querySelector(".word-setup .start-bar .selection-count strong");
   const start = document.querySelector('.word-setup [data-action="start-word-session"]');
   const total = getEligibleWords().length;
+  if (count) count.textContent = String(total);
+  if (start) start.disabled = total === 0;
+}
+
+function refreshGrammarSelectionControls() {
+  const selectedIds = getSelectedGrammarIdSet();
+  document
+    .querySelectorAll(".individual-grammar[data-grammar]")
+    .forEach((button) => {
+      const selected = selectedIds.has(button.dataset.grammar);
+      button.classList.toggle("selected", selected);
+      const mark = button.querySelector(".individual-grammar-check");
+      if (mark) mark.textContent = selected ? "✓" : "+";
+    });
+  const count = document.querySelector(
+    ".grammar-setup .start-bar .selection-count strong",
+  );
+  const start = document.querySelector(
+    '.grammar-setup [data-action="start-grammar-session"]',
+  );
+  const total = getEligibleGrammar().length;
   if (count) count.textContent = String(total);
   if (start) start.disabled = total === 0;
 }
@@ -4825,6 +5619,84 @@ document.addEventListener("click", (event) => {
     );
   }
 
+  if (action === "set-grammar-level") {
+    const scrollPosition = window.scrollY;
+    state.maxGrammarLevel = trigger.dataset.level;
+    saveData();
+    renderHome();
+    requestAnimationFrame(() =>
+      window.scrollTo({ top: scrollPosition, behavior: "instant" }),
+    );
+  }
+
+  if (action === "toggle-grammar-category") {
+    const scrollPosition = window.scrollY;
+    const categoryId = trigger.dataset.category;
+    if (categoryId === "all") {
+      state.selectedGrammarCategories = state.selectedGrammarCategories.has(
+        "all",
+      )
+        ? new Set()
+        : new Set(["all"]);
+    } else {
+      state.selectedGrammarCategories.delete("all");
+      if (state.selectedGrammarCategories.has(categoryId))
+        state.selectedGrammarCategories.delete(categoryId);
+      else state.selectedGrammarCategories.add(categoryId);
+    }
+    saveData();
+    renderHome();
+    requestAnimationFrame(() =>
+      window.scrollTo({ top: scrollPosition, behavior: "instant" }),
+    );
+  }
+
+  if (action === "select-all-grammar") {
+    const scrollPosition = window.scrollY;
+    state.selectedGrammarCategories = new Set(["all"]);
+    state.includedGrammarIds.clear();
+    state.excludedGrammarIds.clear();
+    saveData();
+    renderHome();
+    requestAnimationFrame(() =>
+      window.scrollTo({ top: scrollPosition, behavior: "instant" }),
+    );
+    showToast("Alle Grammatikthemen bis zum Ziellevel ausgewählt.");
+  }
+
+  if (action === "clear-grammar-selection") {
+    const scrollPosition = window.scrollY;
+    state.selectedGrammarCategories.clear();
+    state.includedGrammarIds.clear();
+    state.excludedGrammarIds.clear();
+    saveData();
+    renderHome();
+    requestAnimationFrame(() =>
+      window.scrollTo({ top: scrollPosition, behavior: "instant" }),
+    );
+    showToast("Grammatikauswahl geleert.");
+  }
+
+  if (action === "toggle-grammar") {
+    const grammarId = trigger.dataset.grammar;
+    const grammar = GRAMMAR_BY_ID.get(grammarId);
+    if (grammar) {
+      const selectedByCategory =
+        state.selectedGrammarCategories.has("all") ||
+        state.selectedGrammarCategories.has(grammar.category);
+      const currentlySelected = getSelectedGrammarIdSet().has(grammarId);
+      if (currentlySelected) {
+        state.includedGrammarIds.delete(grammarId);
+        state.excludedGrammarIds.add(grammarId);
+      } else {
+        state.excludedGrammarIds.delete(grammarId);
+        if (!selectedByCategory) state.includedGrammarIds.add(grammarId);
+      }
+      saveData();
+      refreshGrammarSelectionControls();
+    }
+  }
+
   if (action === "set-conversation-mode") {
     const scrollPosition = window.scrollY;
     state.conversationPracticeMode = trigger.dataset.mode;
@@ -4972,6 +5844,18 @@ document.addEventListener("click", (event) => {
       .filter(Boolean);
     startConversationSession(conversations, "hard-conversations");
   }
+  if (action === "start-grammar-session") startGrammarSession();
+  if (action === "start-grammar-review") startGrammarReviewSession();
+  if (action === "practice-hard-grammar") startHardGrammarSession();
+  if (
+    action === "retry-grammar-session" &&
+    state.lastResult?.kind === "grammar"
+  ) {
+    const topics = state.lastResult.itemIds
+      .map((id) => GRAMMAR_BY_ID.get(id))
+      .filter(Boolean);
+    startGrammarSession(topics, "hard-grammar");
+  }
   if (action === "practice-hard") startSession(getHardItems(), "hard");
   if (action === "start-area-review") {
     const starters = {
@@ -4980,6 +5864,7 @@ document.addEventListener("click", (event) => {
       kanji: startKanjiReviewSession,
       "kanji-words": startKanjiWordReviewSession,
       conversation: startConversationReviewSession,
+      grammar: startGrammarReviewSession,
     };
     starters[trigger.dataset.reviewArea]?.();
   }
@@ -5006,6 +5891,19 @@ document.addEventListener("click", (event) => {
   if (action === "speak-japanese")
     speakJapanese(trigger.dataset.speech || "", trigger.dataset.rate);
   if (action === "toggle-recording") toggleConversationRecording();
+  if (action === "start-grammar-exercise") startGrammarExercise();
+  if (action === "answer-grammar")
+    submitGrammarAnswer(trigger.dataset.choice || "");
+  if (action === "continue-grammar") continueGrammarSession();
+  if (action === "toggle-grammar-rule") {
+    const drawer = document.querySelector(".grammar-rule-drawer");
+    const willOpen = Boolean(drawer?.hidden);
+    if (drawer) drawer.hidden = !willOpen;
+    trigger.setAttribute("aria-expanded", String(willOpen));
+    trigger.innerHTML = willOpen
+      ? '<span aria-hidden="true">×</span> Regel ausblenden'
+      : '<span aria-hidden="true">?</span> Regel und Beispiel ansehen';
+  }
 
   if (action === "retry-session" && state.lastResult) {
     const items = state.lastResult.itemIds.map((id) => KANA_BY_ID.get(id)).filter(Boolean);
@@ -5021,6 +5919,20 @@ document.addEventListener("click", (event) => {
 });
 
 document.addEventListener("input", (event) => {
+  if (event.target.matches("#grammar-search")) {
+    const query = event.target.value.trim().toLowerCase();
+    let visible = 0;
+    document
+      .querySelectorAll("#individual-grammar-grid .individual-grammar")
+      .forEach((grammar) => {
+        const matches = !query || grammar.dataset.search.includes(query);
+        grammar.hidden = !matches;
+        if (matches) visible += 1;
+      });
+    const empty = document.querySelector("#grammar-search-empty");
+    if (empty) empty.hidden = visible > 0;
+    return;
+  }
   if (event.target.matches("#conversation-search")) {
     const query = event.target.value.trim().toLowerCase();
     let visible = 0;
@@ -5053,7 +5965,28 @@ document.addEventListener("input", (event) => {
 
 document.addEventListener("keydown", (event) => {
   const session = state.session;
-  if (!session || session.kind !== "conversation") return;
+  if (!session) return;
+  if (session.kind === "grammar") {
+    if (event.metaKey || event.ctrlKey || event.altKey) return;
+    if (event.key === "Enter") {
+      event.preventDefault();
+      if (session.phase === "lesson") startGrammarExercise();
+      else if (session.awaitingAdvance) continueGrammarSession();
+      return;
+    }
+    if (
+      session.phase === "quiz" &&
+      !session.locked &&
+      ["1", "2", "3", "4"].includes(event.key)
+    ) {
+      event.preventDefault();
+      document
+        .querySelectorAll(".grammar-choice-grid button")
+        [Number(event.key) - 1]?.click();
+    }
+    return;
+  }
+  if (session.kind !== "conversation") return;
   if (event.metaKey || event.ctrlKey || event.altKey) return;
   if (event.target.closest("button, input, textarea, audio, a")) return;
   if (event.key === "Enter") {

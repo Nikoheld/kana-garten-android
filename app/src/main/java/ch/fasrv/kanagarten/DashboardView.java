@@ -348,6 +348,7 @@ public final class DashboardView extends ScrollView {
                 case "kanji": return palette.red;
                 case "kanji-words": return 0xFFFF8A72;
                 case "conversation": return palette.green;
+                case "grammar": return 0xFFB9A2FF;
                 default: return 0xFF73BDD4;
             }
         }
@@ -356,6 +357,7 @@ public final class DashboardView extends ScrollView {
             case "kanji": return 0xFFD94A36;
             case "kanji-words": return 0xFFB64231;
             case "conversation": return 0xFF1D7455;
+            case "grammar": return 0xFF7357B5;
             default: return 0xFF43849A;
         }
     }
@@ -366,6 +368,7 @@ public final class DashboardView extends ScrollView {
             case "kanji": return "漢";
             case "kanji-words": return "熟";
             case "conversation": return "話";
+            case "grammar": return "文";
             default: return "あ";
         }
     }
