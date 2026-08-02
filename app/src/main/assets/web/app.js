@@ -1368,13 +1368,16 @@ function getJlptProgress() {
       percent: Math.round(average * 100),
       learned: domainResults.reduce((sum, domain) => sum + domain.learned, 0),
       total: domainResults.reduce((sum, domain) => sum + domain.total, 0),
+      mastered: domainResults.every(
+        (domain) => domain.total > 0 && domain.learned === domain.total,
+      ),
       complete: false,
     };
   };
 
   for (let targetIndex = 0; targetIndex < levels.length; targetIndex += 1) {
     const result = calculate(targetIndex);
-    if (result.percent < 100) return result;
+    if (!result.mastered) return result;
   }
   return { ...calculate(levels.length - 1), complete: true };
 }
