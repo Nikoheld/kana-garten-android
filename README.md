@@ -15,7 +15,7 @@ Eine vollständige, offlinefähige Android-App zum Lesen, Verstehen und Sprechen
 - Hiragana und Katakana, frei kombinierbare Reihen und Eselsbrücken; optional werden Zielzeichen in kurzen Sätzen markiert und nach der Antwort mit vollständiger Lesung und deutscher Übersetzung erklärt
 - Kana- und Kanji-Satzkarten bleiben nach jeder Antwort vollständig sichtbar und wechseln erst nach bewusstem Tippen auf „Weiter“
 - 65 kombinierbare Alltagsszenarien mit 750+ Kana-Wörtern, Einzelwortauswahl und globalem Spaced-Repetition-Topf
-- frei einstellbare Wortfestigung von 1 bis 20 sicheren Treffern; fehlerfreie Serien vergrößern die Abstände besonders schnell, wiederholte Fehler holen ein Wort bis auf wenige Minuten zurück
+- frei einstellbare Wortfestigung von 1 bis 20 sicheren Treffern, direkt in den App-Einstellungen sowie bei Kana- und Kanji-Wörtern; fehlerfreie Serien vergrößern die Abstände besonders schnell, wiederholte Fehler holen ein Wort bis auf wenige Minuten zurück
 - einzelne Kanji und Kanji-Wörter von N5 bis N1; einzelne Kanji lassen sich optional im natürlichen Satzkontext lernen
 - 170 zentrale Grammatikthemen von N5 bis N1 mit Themen- und Einzelauswahl, Regel, Bildung, Lesung, deutscher Übersetzung, Stolperfallen und aktiven Lückensatz-Aufgaben
 - 50 Gesprächssituationen in sieben Themenbereichen mit Rollenspiel, geführtem Sprechen und Shadowing
@@ -24,7 +24,7 @@ Eine vollständige, offlinefähige Android-App zum Lesen, Verstehen und Sprechen
 - ein gemeinsamer Spaced-Repetition-Plan für Kana, Wörter, Kanji, Kanji-Wörter, Grammatik und Gespräche; Kana starten nach 10 Minuten, später wachsen die Abstände bis auf 120 Tage
 - native Lern-Erinnerungen zum nächsten fälligen Termin, auch bei geschlossener App und nach einem Geräteneustart
 - vollständig offline gebündelte Inhalte, Datensätze und Noto Sans JP
-- Aussprachetaste auf jeder Kana-, Kana-Wort-, Kanji- und Kanji-Wort-Lernkarte; Android verwendet dafür gezielt eine installierte japanische Offline-Stimme
+- Aussprachetaste auf jeder Kana-, Kana-Wort-, Kanji- und Kanji-Wort-Lernkarte; Android bevorzugt eine japanische Offline-Stimme, akzeptiert aber jede funktionierende japanische Systemstimme und führt bei fehlenden Sprachdaten direkt zur Installation
 - optional einblendbare Kana-Lesehilfen für einzelne Kanji, Satzkontext und Kanji-Wörter; die Auswahl wird dauerhaft gespeichert
 - doppelte Fortschrittssicherung: Web-Speicher plus natives Android-Backup
 - lokales Usage-Dashboard mit Lernzeit pro Tag, Bereich, Woche, Streak, fälligen Reviews und letzten Einheiten
