@@ -381,6 +381,7 @@ const DEFAULT_DATA = {
     includedWordIds: [],
     excludedWordIds: [],
     wordScenarioGroup: "essentials",
+    wordMasteryTarget: 3,
     maxKanjiLevel: "N5",
     kanjiSentenceMode: false,
     kanjiKanaHints: false,
@@ -460,6 +461,7 @@ let state = {
   includedWordIds: new Set(data.settings.includedWordIds || []),
   excludedWordIds: new Set(data.settings.excludedWordIds || []),
   wordScenarioGroup: data.settings.wordScenarioGroup || "essentials",
+  wordMasteryTarget: clampWordMasteryTarget(data.settings.wordMasteryTarget),
   maxKanjiLevel: data.settings.maxKanjiLevel || "N5",
   kanjiSentenceMode: Boolean(data.settings.kanjiSentenceMode),
   kanjiKanaHints: Boolean(data.settings.kanjiKanaHints),
@@ -591,11 +593,14 @@ function loadData() {
 
 function migrateReviewSchedule(progress) {
   const now = Date.now();
+  const wordMasteryTarget = clampWordMasteryTarget(
+    progress.settings?.wordMasteryTarget,
+  );
   const groups = [
     ["kana", 1],
-    ["words", 3],
+    ["words", wordMasteryTarget],
     ["kanji", 3],
-    ["kanjiWords", 3],
+    ["kanjiWords", wordMasteryTarget],
     ["conversations", 3],
     ["grammar", 3],
   ];
@@ -612,6 +617,22 @@ function migrateReviewSchedule(progress) {
   });
 }
 
+function reconcileWordReviewEligibility() {
+  const target = getWordMasteryTarget();
+  const now = Date.now();
+  [data.words, data.kanjiWords].forEach((entries) => {
+    Object.values(entries || {}).forEach((stat) => {
+      const peak = Math.max(
+        Number(stat.peakStrength || 0),
+        Number(stat.strength || 0),
+      );
+      if (peak >= target && !Number(stat.nextReviewAt || 0)) {
+        stat.nextReviewAt = now;
+      }
+    });
+  });
+}
+
 function saveData() {
   data.settings.learningMode = state.learningMode;
   data.settings.mode = state.mode;
@@ -622,6 +643,7 @@ function saveData() {
   data.settings.includedWordIds = [...state.includedWordIds];
   data.settings.excludedWordIds = [...state.excludedWordIds];
   data.settings.wordScenarioGroup = state.wordScenarioGroup;
+  data.settings.wordMasteryTarget = state.wordMasteryTarget;
   data.settings.maxKanjiLevel = state.maxKanjiLevel;
   data.settings.kanjiSentenceMode = state.kanjiSentenceMode;
   data.settings.kanjiKanaHints = state.kanjiKanaHints;
@@ -863,10 +885,11 @@ function getEligibleWords() {
 }
 
 function getGlobalReviewWords(dueOnly = true) {
+  const masteryTarget = getWordMasteryTarget();
   return VOCABULARY
     .filter((word) => {
       const stat = data.words[word.id];
-      if (!stat || Number(stat.peakStrength || 0) < 3) return false;
+      if (!stat || Number(stat.peakStrength || 0) < masteryTarget) return false;
       return !dueOnly || isWordReviewDue(word);
     })
     .sort((a, b) => {
@@ -887,7 +910,10 @@ function getWordStrength(wordId) {
 function getWordStats() {
   const eligible = getEligibleWords();
   const stats = eligible.map((word) => data.words[word.id]).filter(Boolean);
-  const learned = eligible.filter((word) => getWordStrength(word.id) >= 3).length;
+  const masteryTarget = getWordMasteryTarget();
+  const learned = eligible.filter(
+    (word) => getWordStrength(word.id) >= masteryTarget,
+  ).length;
   const seen = stats.reduce((sum, stat) => sum + (stat.seen || 0), 0);
   const correct = stats.reduce((sum, stat) => sum + (stat.correct || 0), 0);
   const reviewDue = getGlobalReviewWords().length;
@@ -903,7 +929,10 @@ function getWordStats() {
 
 function getWordLevelStats(levelId) {
   const words = VOCABULARY.filter((word) => word.level === levelId);
-  const learned = words.filter((word) => getWordStrength(word.id) >= 3).length;
+  const masteryTarget = getWordMasteryTarget();
+  const learned = words.filter(
+    (word) => getWordStrength(word.id) >= masteryTarget,
+  ).length;
   const seen = words.filter((word) => Number(data.words[word.id]?.seen || 0) > 0).length;
   return { total: words.length, learned, seen };
 }
@@ -913,7 +942,10 @@ function wordDifficultyScore(wordId) {
   if (!stat || Number(stat.wrong || 0) === 0) return 0;
   const seen = Math.max(1, Number(stat.seen || 0));
   const errorRate = Number(stat.wrong || 0) / seen;
-  const strengthGap = Math.max(0, 3 - Number(stat.strength || 0));
+  const strengthGap = Math.max(
+    0,
+    getWordMasteryTarget() - Number(stat.strength || 0),
+  );
   return errorRate * 2 + Math.min(1.2, Number(stat.wrong || 0) * 0.18) + strengthGap * 0.22;
 }
 
@@ -943,8 +975,9 @@ function getKanjiWordStrength(wordId) {
 
 function getKanjiWordLevelStats(levelId) {
   const words = KANJI_VOCABULARY.filter((word) => word.level === levelId);
+  const masteryTarget = getWordMasteryTarget();
   const learned = words.filter(
-    (word) => getKanjiWordStrength(word.id) >= 3,
+    (word) => getKanjiWordStrength(word.id) >= masteryTarget,
   ).length;
   const seen = words.filter(
     (word) => Number(data.kanjiWords[word.id]?.seen || 0) > 0,
@@ -954,7 +987,10 @@ function getKanjiWordLevelStats(levelId) {
 
 function isKanjiWordReviewDue(word) {
   const stat = data.kanjiWords[word.id];
-  if (!stat || Number(stat.peakStrength || 0) < 3) return false;
+  if (
+    !stat ||
+    Number(stat.peakStrength || 0) < getWordMasteryTarget()
+  ) return false;
   if (stat.nextReviewAt) return Date.now() >= Number(stat.nextReviewAt);
   return (
     Number(data.kanjiWordPromptCount || 0) - Number(stat.lastPrompt || 0) >=
@@ -963,9 +999,10 @@ function isKanjiWordReviewDue(word) {
 }
 
 function getGlobalKanjiWordReviews(dueOnly = true) {
+  const masteryTarget = getWordMasteryTarget();
   return KANJI_VOCABULARY.filter((word) => {
     const stat = data.kanjiWords[word.id];
-    if (!stat || Number(stat.peakStrength || 0) < 3) return false;
+    if (!stat || Number(stat.peakStrength || 0) < masteryTarget) return false;
     return !dueOnly || isKanjiWordReviewDue(word);
   }).sort(
     (a, b) =>
@@ -979,8 +1016,9 @@ function getKanjiWordStats() {
   const stats = eligible
     .map((word) => data.kanjiWords[word.id])
     .filter(Boolean);
+  const masteryTarget = getWordMasteryTarget();
   const learned = eligible.filter(
-    (word) => getKanjiWordStrength(word.id) >= 3,
+    (word) => getKanjiWordStrength(word.id) >= masteryTarget,
   ).length;
   const seen = stats.reduce((sum, stat) => sum + (stat.seen || 0), 0);
   const correct = stats.reduce((sum, stat) => sum + (stat.correct || 0), 0);
@@ -1009,13 +1047,10 @@ function recordKanjiWordAttempt(word, wasCorrect) {
   stat.lastPrompt = data.kanjiWordPromptCount;
   if (wasCorrect) {
     stat.correct += 1;
-    stat.strength = Math.min(10, Number(stat.strength || 0) + 1);
-    stat.peakStrength = Math.max(stat.peakStrength || 0, stat.strength);
   } else {
     stat.wrong += 1;
-    stat.strength = Math.max(0, Number(stat.strength || 0) - 1);
   }
-  updateNextReview(stat, wasCorrect);
+  updateAdaptiveWordMemory(stat, wasCorrect, stat.lastPracticed);
   data.kanjiWords[word.id] = stat;
   saveData();
   return stat.strength;
@@ -1026,7 +1061,10 @@ function kanjiWordDifficultyScore(wordId) {
   if (!stat || Number(stat.wrong || 0) === 0) return 0;
   const seen = Math.max(1, Number(stat.seen || 0));
   const errorRate = Number(stat.wrong || 0) / seen;
-  const strengthGap = Math.max(0, 3 - Number(stat.strength || 0));
+  const strengthGap = Math.max(
+    0,
+    getWordMasteryTarget() - Number(stat.strength || 0),
+  );
   return (
     errorRate * 2 +
     Math.min(1.2, Number(stat.wrong || 0) * 0.18) +
@@ -1369,6 +1407,145 @@ function getHardGrammar(limit = 20) {
     .slice(0, limit);
 }
 
+function clampWordMasteryTarget(value) {
+  const parsed = Number.parseInt(value, 10);
+  return Math.min(20, Math.max(1, Number.isFinite(parsed) ? parsed : 3));
+}
+
+function getWordMasteryTarget() {
+  return clampWordMasteryTarget(state.wordMasteryTarget);
+}
+
+function getWordMasteryProfile(value = getWordMasteryTarget()) {
+  const target = clampWordMasteryTarget(value);
+  if (target <= 3) {
+    return {
+      label: "Schnell",
+      description: "Wörter verlassen die aktive Gruppe früh und werden im Langzeitplan geprüft.",
+    };
+  }
+  if (target <= 7) {
+    return {
+      label: "Ausgewogen",
+      description: "Mehrere sichere Abrufe festigen jedes Wort, ohne die Runde unnötig zu verlängern.",
+    };
+  }
+  if (target <= 12) {
+    return {
+      label: "Gründlich",
+      description: "Wörter bleiben lange aktiv und müssen oft fehlerfrei erinnert werden.",
+    };
+  }
+  return {
+    label: "Intensiv",
+    description: "Sehr viele sichere Abrufe pro Wort – ideal für besonders hartnäckige Inhalte.",
+  };
+}
+
+function adaptiveWordReviewDelay(stat) {
+  const hour = 60 * 60 * 1000;
+  const day = 24 * hour;
+  const intervals = [
+    6 * hour,
+    day,
+    3 * day,
+    7 * day,
+    14 * day,
+    30 * day,
+    60 * day,
+    120 * day,
+    240 * day,
+    365 * day,
+  ];
+  const streak = Math.max(0, Number(stat.reviewStreak || 0));
+  const base = intervals[Math.min(streak, intervals.length - 1)];
+  const difficulty = Math.min(1, Math.max(0, Number(stat.difficulty || 0)));
+  const correctStreak = Math.min(8, Math.max(0, Number(stat.correctStreak || 0)));
+  const confidenceFactor = 0.45 + (1 - difficulty) * 1.2 + correctStreak * 0.035;
+  return Math.round(base * confidenceFactor);
+}
+
+function adaptiveWordFailureDelay(stat) {
+  const minute = 60 * 1000;
+  const wrongStreak = Number(stat.wrongStreak || 0);
+  const difficulty = Number(stat.difficulty || 0);
+  if (wrongStreak >= 3 || difficulty >= 0.8) return 2 * minute;
+  if (wrongStreak >= 2 || difficulty >= 0.58) return 5 * minute;
+  return 10 * minute;
+}
+
+function updateAdaptiveWordMemory(stat, wasCorrect, now = Date.now()) {
+  const target = getWordMasteryTarget();
+  const strengthBefore = Number(stat.strength || 0);
+  const wasStrongBefore = strengthBefore >= target;
+  const previousSeen = Math.max(1, Number(stat.seen || 1));
+  const inferredDifficulty = Math.min(
+    0.9,
+    Number(stat.wrong || 0) / previousSeen,
+  );
+  const currentDifficulty = Number.isFinite(Number(stat.difficulty))
+    ? Number(stat.difficulty)
+    : inferredDifficulty;
+
+  if (wasCorrect) {
+    stat.correctStreak = Number(stat.correctStreak || 0) + 1;
+    stat.wrongStreak = 0;
+    stat.difficulty = Math.max(
+      0.02,
+      currentDifficulty * 0.76 - Math.min(0.07, stat.correctStreak * 0.007),
+    );
+    stat.strength = Math.min(40, strengthBefore + 1);
+    stat.peakStrength = Math.max(
+      Number(stat.peakStrength || 0),
+      stat.strength,
+    );
+
+    if (stat.strength >= target) {
+      stat.reviewStreak = wasStrongBefore
+        ? Number(stat.reviewStreak || 0) + 1
+        : 0;
+      stat.nextReviewAt = now + adaptiveWordReviewDelay(stat);
+    } else {
+      delete stat.nextReviewAt;
+    }
+    return;
+  }
+
+  stat.correctStreak = 0;
+  stat.wrongStreak = Number(stat.wrongStreak || 0) + 1;
+  stat.reviewStreak = 0;
+  stat.difficulty = Math.min(
+    1,
+    currentDifficulty + 0.22 + Math.min(0.24, stat.wrongStreak * 0.06),
+  );
+  const strengthLoss = 1 + Math.min(3, stat.wrongStreak);
+  stat.strength = Math.max(0, strengthBefore - strengthLoss);
+  if (Number(stat.peakStrength || 0) >= target) {
+    stat.nextReviewAt = now + adaptiveWordFailureDelay(stat);
+  } else {
+    delete stat.nextReviewAt;
+  }
+}
+
+function getAdaptiveWordReinsertPlan(stat, wasCorrect) {
+  if (!wasCorrect) {
+    const wrongStreak = Number(stat?.wrongStreak || 0);
+    const difficulty = Number(stat?.difficulty || 0);
+    if (wrongStreak >= 3 || difficulty >= 0.78) {
+      return { distance: 1, spread: 0 };
+    }
+    if (wrongStreak >= 2 || difficulty >= 0.5) {
+      return { distance: 1, spread: 1 };
+    }
+    return { distance: 2, spread: 1 };
+  }
+  const correctStreak = Number(stat?.correctStreak || 0);
+  return {
+    distance: Math.min(5, 1 + Math.floor(correctStreak / 2)),
+    spread: 1,
+  };
+}
+
 function reviewInterval(strength) {
   if (strength >= 5) return 30;
   if (strength >= 4) return 18;
@@ -1411,7 +1588,10 @@ function updateKanaNextReview(stat, wasCorrect) {
 
 function isWordReviewDue(word) {
   const stat = data.words[word.id];
-  if (!stat || Number(stat.peakStrength || 0) < 3) return false;
+  if (
+    !stat ||
+    Number(stat.peakStrength || 0) < getWordMasteryTarget()
+  ) return false;
   if (stat.nextReviewAt) return Date.now() >= Number(stat.nextReviewAt);
   return Number(data.wordPromptCount || 0) - Number(stat.lastPrompt || 0) >= reviewInterval(stat.strength);
 }
@@ -1430,13 +1610,10 @@ function recordWordAttempt(word, wasCorrect) {
   stat.lastPrompt = data.wordPromptCount;
   if (wasCorrect) {
     stat.correct += 1;
-    stat.strength = Math.min(10, Number(stat.strength || 0) + 1);
-    stat.peakStrength = Math.max(stat.peakStrength || 0, stat.strength);
   } else {
     stat.wrong += 1;
-    stat.strength = Math.max(0, Number(stat.strength || 0) - 1);
   }
-  updateNextReview(stat, wasCorrect);
+  updateAdaptiveWordMemory(stat, wasCorrect, stat.lastPracticed);
   data.words[word.id] = stat;
   saveData();
   return stat.strength;
@@ -1671,18 +1848,19 @@ function getReviewOverview() {
 
 function getJlptProgress() {
   const levels = ["N5", "N4", "N3", "N2", "N1"];
+  const wordMasteryTarget = getWordMasteryTarget();
   const domains = [
-    { items: VOCABULARY, stats: data.words },
-    { items: KANJI_VOCABULARY, stats: data.kanjiWords },
-    { items: KANJI, stats: data.kanji },
-    { items: CONVERSATIONS, stats: data.conversations },
-    { items: GRAMMAR, stats: data.grammar },
+    { items: VOCABULARY, stats: data.words, target: wordMasteryTarget },
+    { items: KANJI_VOCABULARY, stats: data.kanjiWords, target: wordMasteryTarget },
+    { items: KANJI, stats: data.kanji, target: 3 },
+    { items: CONVERSATIONS, stats: data.conversations, target: 3 },
+    { items: GRAMMAR, stats: data.grammar, target: 3 },
   ];
   const calculate = (targetIndex) => {
-    const domainResults = domains.map(({ items, stats }) => {
+    const domainResults = domains.map(({ items, stats, target }) => {
       const eligible = items.filter((item) => item.levelIndex <= targetIndex);
       const learned = eligible.filter(
-        (item) => Number(stats[item.id]?.strength || 0) >= 3,
+        (item) => Number(stats[item.id]?.strength || 0) >= target,
       ).length;
       return {
         learned,
@@ -2340,8 +2518,10 @@ function renderWordSetup() {
 
       <div class="word-mode-note" aria-label="Lernmodus">
         <span aria-hidden="true">語</span>
-        <div><strong>Wie beim Kana-Lernen – ein Wort nach dem anderen</strong><small>Japanisches Wort sehen · deutsche Bedeutung eingeben · Fehler kommen später erneut · drei sichere Treffer festigen das Wort</small></div>
+        <div><strong>Wie beim Kana-Lernen – ein Wort nach dem anderen</strong><small>Japanisches Wort sehen · deutsche Bedeutung eingeben · Fehler kommen adaptiv erneut · ${getWordMasteryTarget()} ${getWordMasteryTarget() === 1 ? "sicherer Treffer festigt" : "sichere Treffer festigen"} das Wort</small></div>
       </div>
+
+      ${renderWordMasteryControl()}
 
       <div class="word-level-toolbar">
         <div><strong>Maximales Sprachlevel</strong><small>Einfachere Wörter sind immer enthalten.</small></div>
@@ -2399,7 +2579,9 @@ function renderWordSetup() {
             const setWords = getWordsForSet(set.id);
             const allSetWords = getWordsForSet(set.id, false);
             const selected = state.selectedWordSets.has(set.id);
-            const learned = setWords.filter((word) => getWordStrength(word.id) >= 3).length;
+            const learned = setWords.filter(
+              (word) => getWordStrength(word.id) >= getWordMasteryTarget(),
+            ).length;
             const preview = setWords.slice(0, 4).map((word) => word.kana).join(" · ");
             return `
               <button class="scenario-set-card${selected ? " selected" : ""}" type="button" data-action="toggle-word-set" data-set="${set.id}" ${setWords.length ? "" : "disabled"} aria-pressed="${selected}">
@@ -2484,6 +2666,8 @@ function renderKanjiWordSetup() {
         </div>
       </div>
 
+      ${renderWordMasteryControl()}
+
       <div class="jlpt-word-path" role="radiogroup" aria-label="Maximales JLPT-Level für Kanji-Wörter">
         ${KANJI_WORD_LEVELS.map((level, levelIndex) => {
           const active = state.maxKanjiWordLevel === level.id;
@@ -2523,7 +2707,7 @@ function renderKanjiWordSetup() {
         </div>
         <div>
           <strong>Vier Kanji-Wörter. Bedeutung und Lesung verknüpfen.</strong>
-          <p>Drei sichere Treffer festigen ein Wort. Bei einem Fehler bleibt Bedeutung und Kana-Lesung stehen, bis du mit Enter weitergehst.</p>
+          <p>${getWordMasteryTarget()} ${getWordMasteryTarget() === 1 ? "sicherer Treffer festigt" : "sichere Treffer festigen"} ein Wort. Bei einem Fehler bleibt Bedeutung und Kana-Lesung stehen, bis du mit Enter weitergehst.</p>
         </div>
       </div>
 
@@ -2902,10 +3086,41 @@ function refreshSetup() {
   start.disabled = getItemsForSelection().length === 0;
 }
 
+function renderWordMasteryControl() {
+  const target = getWordMasteryTarget();
+  const profile = getWordMasteryProfile(target);
+  const progress = ((target - 1) / 19) * 100;
+  return `
+    <section class="word-mastery-control" aria-labelledby="word-mastery-title">
+      <div class="word-mastery-heading">
+        <div>
+          <span class="eyebrow">Persönliche Festigung</span>
+          <strong id="word-mastery-title">Wie oft soll ein Wort zuerst sitzen?</strong>
+          <small>Diese Einstellung gilt für Kana- und Kanji-Wörter.</small>
+        </div>
+        <output class="word-mastery-value" for="word-mastery-range">${target}<span> Treffer</span></output>
+      </div>
+      <label class="word-mastery-range-shell" for="word-mastery-range">
+        <span class="sr-only">Benötigte sichere Treffer von 1 bis 20</span>
+        <input id="word-mastery-range" type="range" min="1" max="20" step="1" value="${target}" style="--mastery-progress:${progress}%">
+        <span class="word-mastery-scale" aria-hidden="true"><b>1</b><i>5</i><i>10</i><i>15</i><b>20</b></span>
+      </label>
+      <div class="word-mastery-caption">
+        <strong>${profile.label}</strong>
+        <span>${profile.description}</span>
+      </div>
+      <p class="word-mastery-adaptive-note"><span aria-hidden="true">↗</span> Fehlerfreie Wörter bekommen danach immer schneller längere Abstände. Schwierige Wörter werden nach Fehlern sehr eng erneut eingestreut.</p>
+    </section>
+  `;
+}
+
 function startWordSession(wordPool = null, sourceOverride = null) {
   const focusedPractice = Array.isArray(wordPool);
   const eligible = focusedPractice ? wordPool : getEligibleWords();
-  const weakWords = eligible.filter((word) => getWordStrength(word.id) < 3);
+  const masteryTarget = getWordMasteryTarget();
+  const weakWords = eligible.filter(
+    (word) => getWordStrength(word.id) < masteryTarget,
+  );
   const maintenance = !focusedPractice && weakWords.length === 0;
   const candidates = focusedPractice
     ? eligible
@@ -3002,14 +3217,19 @@ function loadNextWordCycle() {
   session.queue = shuffle(session.cycleIds);
 }
 
-function insertWordLater(wordId, minDistance = 2) {
+function insertWordLater(wordId, minDistance = 2, spread = 2) {
   const session = state.session;
   if (!session || session.kind !== "words" || session.queue.includes(wordId)) return;
   const minIndex = Math.min(minDistance, session.queue.length);
-  const maxIndex = Math.min(minDistance + 2, session.queue.length);
+  const maxIndex = Math.min(minDistance + spread, session.queue.length);
   const insertionIndex =
     minIndex + Math.floor(Math.random() * (maxIndex - minIndex + 1));
   session.queue.splice(insertionIndex, 0, wordId);
+}
+
+function insertWordAdaptively(wordId, wasCorrect) {
+  const plan = getAdaptiveWordReinsertPlan(data.words[wordId], wasCorrect);
+  insertWordLater(wordId, plan.distance, plan.spread);
 }
 
 function maybeInsertWordReview() {
@@ -3031,12 +3251,19 @@ function maybeInsertWordReview() {
   }
 }
 
-function wordConfidenceDots(strength) {
-  const safeStrength = Math.min(3, Math.max(0, strength));
+function wordConfidenceDots(strength, target = 3) {
+  const safeTarget = clampWordMasteryTarget(target);
+  const safeStrength = Math.min(safeTarget, Math.max(0, strength));
+  const progress = safeTarget ? (safeStrength / safeTarget) * 100 : 0;
+  const dots = safeTarget <= 5
+    ? `<span class="confidence-dots" aria-hidden="true">
+        ${Array.from({ length: safeTarget }, (_, index) => `<i class="${index < safeStrength ? "filled" : ""}"></i>`).join("")}
+      </span>`
+    : `<span class="confidence-meter" aria-hidden="true"><i style="width:${progress}%"></i></span>`;
   return `
     <span class="confidence-label">Sicherheit</span>
-    <span class="confidence-dots" aria-label="${safeStrength} von 3 sicheren Treffern">
-      ${[1, 2, 3].map((step) => `<i class="${step <= safeStrength ? "filled" : ""}"></i>`).join("")}
+    <span class="confidence-progress" aria-label="${safeStrength} von ${safeTarget} sicheren Treffern">
+      ${dots}<b>${safeStrength}/${safeTarget}</b>
     </span>
   `;
 }
@@ -3087,7 +3314,7 @@ function renderWordQuiz() {
           ${renderLearningPronunciation(word.kana, "Wort anhören", 0.82)}
         </div>
 
-        <div class="word-confidence">${wordConfidenceDots(strength)}</div>
+        <div class="word-confidence">${wordConfidenceDots(strength, getWordMasteryTarget())}</div>
 
         <form class="answer-form word-answer-form" autocomplete="off">
           <label class="answer-label" for="kana-answer">Deutsche Bedeutung</label>
@@ -3114,7 +3341,7 @@ function renderWordQuiz() {
             <button class="reveal-button" type="button" data-action="reveal-word-answer">Antwort zeigen</button>
           </div>
         </form>
-        <p class="queue-note"><span aria-hidden="true">◎</span> Drei sichere Treffer festigen ein Wort. Später kommt es zur Kontrolle wieder.</p>
+        <p class="queue-note"><span aria-hidden="true">◎</span> ${getWordMasteryTarget()} ${getWordMasteryTarget() === 1 ? "sicherer Treffer festigt" : "sichere Treffer festigen"} ein Wort. Fehler verkürzen den Weg bis zur nächsten Wiederholung deutlich.</p>
       </section>
     </div>
   `;
@@ -3143,17 +3370,18 @@ function submitWordAnswer(rawAnswer, revealed = false) {
     session.mistakesById[word.id] = (session.mistakesById[word.id] || 0) + 1;
   }
   const newStrength = recordWordAttempt(word, wasCorrect);
+  const masteryTarget = getWordMasteryTarget();
 
   if (isInjectedReview) {
-    if (wasCorrect) session.reviewedIds.add(word.id);
-    else insertWordLater(word.id, 2);
-  } else if (
-    wasCorrect &&
-    (session.reviewOnly || newStrength >= 3)
-  ) {
+    if (wasCorrect && newStrength >= masteryTarget) {
+      session.reviewedIds.add(word.id);
+    } else {
+      insertWordAdaptively(word.id, wasCorrect);
+    }
+  } else if (wasCorrect && newStrength >= masteryTarget) {
     session.mastered.add(word.id);
   } else {
-    insertWordLater(word.id, 2);
+    insertWordAdaptively(word.id, wasCorrect);
   }
 
   const card = document.querySelector(".quiz-kana-wrap");
@@ -3166,8 +3394,8 @@ function submitWordAnswer(rawAnswer, revealed = false) {
     card.classList.add("quiz-card-correct");
     feedback.className = "feedback correct";
     feedback.textContent =
-      !isReview && newStrength < 3
-        ? `Richtig — ${word.primary} · noch ${3 - newStrength}×`
+      newStrength < masteryTarget
+        ? `Richtig — ${word.primary} · noch ${masteryTarget - newStrength}×`
         : `Richtig — ${word.primary}`;
   } else {
     card.classList.add("quiz-card-wrong");
@@ -3223,8 +3451,9 @@ function finishWordSession() {
 function startKanjiWordSession(wordPool = null, sourceOverride = null) {
   const focusedPractice = Array.isArray(wordPool);
   const eligible = focusedPractice ? wordPool : getEligibleKanjiWords();
+  const masteryTarget = getWordMasteryTarget();
   const weakWords = eligible.filter(
-    (word) => getKanjiWordStrength(word.id) < 3,
+    (word) => getKanjiWordStrength(word.id) < masteryTarget,
   );
   const maintenance = !focusedPractice && weakWords.length === 0;
   const candidates = focusedPractice
@@ -3242,7 +3471,8 @@ function startKanjiWordSession(wordPool = null, sourceOverride = null) {
     const reviewFillers = eligible
       .filter(
         (word) =>
-          !cycleIds.has(word.id) && getKanjiWordStrength(word.id) >= 3,
+          !cycleIds.has(word.id) &&
+          getKanjiWordStrength(word.id) >= masteryTarget,
       )
       .sort(
         (a, b) =>
@@ -3320,7 +3550,7 @@ function advanceKanjiWordSession() {
   renderKanjiWordQuiz();
 }
 
-function insertKanjiWordLater(wordId, minDistance = 2) {
+function insertKanjiWordLater(wordId, minDistance = 2, spread = 2) {
   const session = state.session;
   if (
     !session ||
@@ -3330,10 +3560,18 @@ function insertKanjiWordLater(wordId, minDistance = 2) {
     return;
   }
   const minIndex = Math.min(minDistance, session.queue.length);
-  const maxIndex = Math.min(minDistance + 2, session.queue.length);
+  const maxIndex = Math.min(minDistance + spread, session.queue.length);
   const insertionIndex =
     minIndex + Math.floor(Math.random() * (maxIndex - minIndex + 1));
   session.queue.splice(insertionIndex, 0, wordId);
+}
+
+function insertKanjiWordAdaptively(wordId, wasCorrect) {
+  const plan = getAdaptiveWordReinsertPlan(
+    data.kanjiWords[wordId],
+    wasCorrect,
+  );
+  insertKanjiWordLater(wordId, plan.distance, plan.spread);
 }
 
 function maybeInsertKanjiWordReview() {
@@ -3404,7 +3642,7 @@ function renderKanjiWordQuiz() {
           ${renderLiveKanaHelpToggle()}
         </div>
 
-        <div class="word-confidence">${wordConfidenceDots(strength)}</div>
+        <div class="word-confidence">${wordConfidenceDots(strength, getWordMasteryTarget())}</div>
         <div class="kanji-word-learning-note" hidden>
           <span><small>Kana-Lesung</small><strong lang="ja">${word.reading}</strong></span>
           <span><small>Deutsche Bedeutung</small><strong>${word.primary}</strong>${word.answers.length > 1 ? `<em>Auch: ${word.answers.slice(1).join(", ")}</em>` : ""}</span>
@@ -3473,17 +3711,19 @@ function submitKanjiWordAnswer(rawAnswer, revealed = false) {
       (session.mistakesById[word.id] || 0) + 1;
   }
   const newStrength = recordKanjiWordAttempt(word, wasCorrect);
+  const masteryTarget = getWordMasteryTarget();
 
   if (isReview) {
-    if (wasCorrect) {
+    if (wasCorrect && newStrength >= masteryTarget) {
       session.reviewedIds.add(word.id);
       if (session.reviewOnly) session.mastered.add(word.id);
+    } else {
+      insertKanjiWordAdaptively(word.id, wasCorrect);
     }
-    else insertKanjiWordLater(word.id, 2);
-  } else if (wasCorrect && (session.maintenance || newStrength >= 3)) {
+  } else if (wasCorrect && newStrength >= masteryTarget) {
     session.mastered.add(word.id);
   } else {
-    insertKanjiWordLater(word.id, 2);
+    insertKanjiWordAdaptively(word.id, wasCorrect);
   }
 
   const card = document.querySelector(".quiz-kana-wrap");
@@ -3499,8 +3739,8 @@ function submitKanjiWordAnswer(rawAnswer, revealed = false) {
     card.classList.add("quiz-card-correct");
     feedback.className = "feedback correct";
     feedback.textContent =
-      !isReview && !session.maintenance && newStrength < 3
-        ? `Richtig — ${word.primary} · noch ${3 - newStrength}×`
+      newStrength < masteryTarget
+        ? `Richtig — ${word.primary} · noch ${masteryTarget - newStrength}×`
         : `Richtig — ${word.primary}`;
   } else {
     card.classList.add("quiz-card-wrong");
@@ -5477,6 +5717,7 @@ function resetProgress() {
       state.includedWordIds = new Set();
       state.excludedWordIds = new Set();
       state.wordScenarioGroup = "essentials";
+      state.wordMasteryTarget = 3;
       state.maxKanjiLevel = "N5";
       state.maxKanjiWordLevel = "N5";
       state.maxConversationLevel = "N5";
@@ -6044,6 +6285,25 @@ document.addEventListener("click", (event) => {
 });
 
 document.addEventListener("input", (event) => {
+  if (event.target.matches("#word-mastery-range")) {
+    const target = clampWordMasteryTarget(event.target.value);
+    const control = event.target.closest(".word-mastery-control");
+    const profile = getWordMasteryProfile(target);
+    state.wordMasteryTarget = target;
+    reconcileWordReviewEligibility();
+    event.target.style.setProperty(
+      "--mastery-progress",
+      `${((target - 1) / 19) * 100}%`,
+    );
+    const output = control?.querySelector(".word-mastery-value");
+    const caption = control?.querySelector(".word-mastery-caption");
+    if (output) output.innerHTML = `${target}<span> Treffer</span>`;
+    if (caption) {
+      caption.innerHTML = `<strong>${profile.label}</strong><span>${profile.description}</span>`;
+    }
+    saveData();
+    return;
+  }
   if (event.target.matches("#grammar-search")) {
     const query = event.target.value.trim().toLowerCase();
     let visible = 0;
@@ -6086,6 +6346,18 @@ document.addEventListener("input", (event) => {
   });
   const empty = document.querySelector("#word-search-empty");
   if (empty) empty.hidden = visible > 0;
+});
+
+document.addEventListener("change", (event) => {
+  if (!event.target.matches("#word-mastery-range")) return;
+  const scrollPosition = window.scrollY;
+  state.wordMasteryTarget = clampWordMasteryTarget(event.target.value);
+  reconcileWordReviewEligibility();
+  saveData();
+  renderHome();
+  requestAnimationFrame(() =>
+    window.scrollTo({ top: scrollPosition, behavior: "instant" }),
+  );
 });
 
 document.addEventListener("keydown", (event) => {
