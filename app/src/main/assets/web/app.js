@@ -5025,7 +5025,7 @@ function renderKanjiQuiz() {
             </button>
           </div>
         </form>
-        <p class="queue-note"><span aria-hidden="true">${sentenceContext ? "文" : "漫"}</span> ${sentenceContext ? "Nach der Antwort erscheinen Satzlesung und deutsche Übersetzung." : "Nach jeder Antwort siehst du Lesung und ein typisches Manga-Beispiel."}</p>
+        <p class="queue-note"><span aria-hidden="true">${sentenceContext ? "文" : "漫"}</span> ${sentenceContext ? "Satzlesung und Übersetzung bleiben sichtbar, bis du Weiter drückst." : "Nach jeder Antwort siehst du Lesung und ein typisches Manga-Beispiel."}</p>
       </section>
     </div>
   `;
@@ -5099,19 +5099,20 @@ function submitKanjiAnswer(rawAnswer, revealed = false) {
     card.classList.add("quiz-card-wrong");
     feedback.className = "feedback wrong";
     feedback.textContent = revealed ? "Lösung" : "Falsch";
+  }
+
+  if (session.sentenceMode || !wasCorrect) {
     session.awaitingAdvance = true;
     continueButton.hidden = false;
     requestAnimationFrame(() =>
       continueButton.focus({ preventScroll: true }),
     );
-  }
-
-  if (wasCorrect) {
+  } else {
     state.timer = window.setTimeout(() => {
       if (!state.session || state.session !== session) return;
       maybeInsertKanjiReview();
       advanceKanjiSession();
-    }, session.sentenceMode ? 2600 : 1500);
+    }, 1500);
   }
 }
 
@@ -5177,6 +5178,7 @@ function startSession(items, source = "selection") {
     mistakesById: {},
     startedAt: Date.now(),
     locked: false,
+    awaitingAdvance: false,
     feedback: null,
   };
   state.view = "quiz";
@@ -5229,6 +5231,7 @@ function advanceSession() {
   }
   session.currentId = session.queue.shift();
   session.locked = false;
+  session.awaitingAdvance = false;
   session.feedback = null;
   renderQuiz();
 }
@@ -5327,9 +5330,12 @@ function renderQuiz() {
           <div class="answer-meta">
             <p class="feedback" id="answer-feedback" aria-live="polite"></p>
             <button class="reveal-button" type="button" data-action="reveal-answer">Antwort zeigen</button>
+            <button class="kanji-continue-button kana-sentence-continue-button" type="submit" hidden>
+              Weiter <span>Enter ↵</span>
+            </button>
           </div>
         </form>
-        <p class="queue-note"><span aria-hidden="true">${sentenceContext ? "文" : "↻"}</span> ${sentenceContext ? "Nach der Antwort siehst du die gesamte Lesung und Übersetzung; Fehler kehren später zurück." : "Ein Fehler? Das Zeichen wird später automatisch erneut eingestreut."}</p>
+        <p class="queue-note"><span aria-hidden="true">${sentenceContext ? "文" : "↻"}</span> ${sentenceContext ? "Lesung und Übersetzung bleiben sichtbar, bis du Weiter drückst; Fehler kehren später zurück." : "Ein Fehler? Das Zeichen wird später automatisch erneut eingestreut."}</p>
       </section>
     </div>
   `;
@@ -5341,7 +5347,12 @@ function renderQuiz() {
 
 function submitAnswer(rawAnswer, revealed = false) {
   const session = state.session;
-  if (!session || session.locked) return;
+  if (!session || session.kind !== "kana") return;
+  if (session.awaitingAdvance) {
+    completeKanaAnswerAdvance(session);
+    return;
+  }
+  if (session.locked) return;
   const kana = KANA_BY_ID.get(session.currentId);
   const answer = normalizeRomaji(rawAnswer);
   if (!answer && !revealed) return;
@@ -5366,6 +5377,9 @@ function submitAnswer(rawAnswer, revealed = false) {
   const input = document.querySelector("#kana-answer");
   const feedback = document.querySelector(".feedback");
   const revealButton = document.querySelector(".reveal-button");
+  const continueButton = document.querySelector(
+    ".kana-sentence-continue-button",
+  );
   const sentenceAnswer = document.querySelector(".sentence-context-answer");
   input.disabled = true;
   revealButton.hidden = true;
@@ -5381,15 +5395,37 @@ function submitAnswer(rawAnswer, revealed = false) {
     feedback.textContent = `${revealed ? "Antwort" : "Noch nicht"} — ${kana.primary}`;
   }
 
+  session.feedback = {
+    kanaId: kana.id,
+    wasCorrect,
+    isReview,
+    isInjectedReview,
+  };
+
+  if (session.sentenceMode) {
+    session.awaitingAdvance = true;
+    continueButton.hidden = false;
+    requestAnimationFrame(() =>
+      continueButton.focus({ preventScroll: true }),
+    );
+    return;
+  }
+
   state.timer = window.setTimeout(
     () => {
-      if (!state.session || state.session !== session) return;
-      if (!wasCorrect) insertKanaLater(kana.id, 2);
-      if (!isReview || isInjectedReview) maybeInsertKanaReview();
-      advanceSession();
+      completeKanaAnswerAdvance(session);
     },
-    session.sentenceMode ? (wasCorrect ? 1800 : 2800) : wasCorrect ? 520 : 1350,
+    wasCorrect ? 520 : 1350,
   );
+}
+
+function completeKanaAnswerAdvance(session) {
+  if (!state.session || state.session !== session || !session.feedback) return;
+  const { kanaId, wasCorrect, isReview, isInjectedReview } = session.feedback;
+  session.awaitingAdvance = false;
+  if (!wasCorrect) insertKanaLater(kanaId, 2);
+  if (!isReview || isInjectedReview) maybeInsertKanaReview();
+  advanceSession();
 }
 
 function finishSession() {
