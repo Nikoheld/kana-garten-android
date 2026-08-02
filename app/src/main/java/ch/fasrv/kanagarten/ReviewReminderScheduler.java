@@ -154,13 +154,26 @@ final class ReviewReminderScheduler {
         if (json == null || json.length() < 2) return summary;
         try {
             JSONObject progress = new JSONObject(json);
+            int wordMasteryTarget = Math.max(
+                1,
+                Math.min(
+                    20,
+                    progress.optJSONObject("settings") == null
+                        ? 3
+                        : progress.optJSONObject("settings").optInt("wordMasteryTarget", 3)
+                )
+            );
             String[] groups = {"kana", "words", "kanji", "kanjiWords", "conversations", "grammar"};
             for (String group : groups) {
                 JSONObject entries = progress.optJSONObject(group);
                 if (entries == null) continue;
                 JSONArray names = entries.names();
                 if (names == null) continue;
-                int minimumStrength = "kana".equals(group) ? 1 : 3;
+                int minimumStrength = "kana".equals(group)
+                    ? 1
+                    : ("words".equals(group) || "kanjiWords".equals(group))
+                        ? wordMasteryTarget
+                        : 3;
                 for (int i = 0; i < names.length(); i++) {
                     JSONObject stat = entries.optJSONObject(names.optString(i));
                     if (stat == null) continue;

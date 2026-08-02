@@ -815,6 +815,180 @@ html[data-theme="dark"] .paper-grain {
   line-height: 1.45;
 }
 
+.word-mastery-control {
+  margin: 0 0 20px;
+  padding: 18px 20px;
+  border: 1.5px solid var(--ink);
+  border-radius: 17px;
+  background: var(--surface-strong);
+  box-shadow: 3px 3px 0 var(--shadow-color);
+}
+
+.word-mastery-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.word-mastery-heading .eyebrow,
+.word-mastery-heading strong,
+.word-mastery-heading small {
+  display: block;
+}
+
+.word-mastery-heading strong {
+  margin-top: 4px;
+  font-size: 15px;
+}
+
+.word-mastery-heading small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.word-mastery-value {
+  flex: 0 0 auto;
+  min-width: 94px;
+  padding: 8px 11px;
+  border: 1px solid var(--ink);
+  border-radius: 11px;
+  background: var(--yellow);
+  color: var(--on-yellow);
+  font-size: 24px;
+  font-weight: 850;
+  text-align: center;
+}
+
+.word-mastery-value span {
+  font-size: 8px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.word-mastery-range-shell {
+  display: block;
+  margin-top: 17px;
+}
+
+.word-mastery-range-shell input {
+  width: 100%;
+  height: 24px;
+  margin: 0;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+.word-mastery-range-shell input::-webkit-slider-runnable-track {
+  height: 8px;
+  border: 1px solid var(--ink);
+  border-radius: 99px;
+  background: linear-gradient(
+    to right,
+    var(--green) 0 var(--mastery-progress),
+    var(--line) var(--mastery-progress) 100%
+  );
+}
+
+.word-mastery-range-shell input::-moz-range-track {
+  height: 8px;
+  border: 1px solid var(--ink);
+  border-radius: 99px;
+  background: var(--line);
+}
+
+.word-mastery-range-shell input::-moz-range-progress {
+  height: 8px;
+  border-radius: 99px;
+  background: var(--green);
+}
+
+.word-mastery-range-shell input::-webkit-slider-thumb {
+  width: 23px;
+  height: 23px;
+  margin-top: -8px;
+  appearance: none;
+  border: 2px solid var(--ink);
+  border-radius: 50%;
+  background: var(--paper-light);
+  box-shadow: 2px 2px 0 var(--shadow-color);
+}
+
+.word-mastery-range-shell input::-moz-range-thumb {
+  width: 21px;
+  height: 21px;
+  border: 2px solid var(--ink);
+  border-radius: 50%;
+  background: var(--paper-light);
+  box-shadow: 2px 2px 0 var(--shadow-color);
+}
+
+.word-mastery-range-shell input:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--green) 45%, transparent);
+  outline-offset: 4px;
+}
+
+.word-mastery-scale {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 8px;
+  font-style: normal;
+}
+
+.word-mastery-scale > :first-child {
+  text-align: left;
+}
+
+.word-mastery-scale > :not(:first-child):not(:last-child) {
+  text-align: center;
+}
+
+.word-mastery-scale > :last-child {
+  text-align: right;
+}
+
+.word-mastery-caption {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  margin-top: 12px;
+}
+
+.word-mastery-caption strong {
+  flex: 0 0 auto;
+  color: var(--green);
+  font-size: 11px;
+}
+
+.word-mastery-caption span,
+.word-mastery-adaptive-note {
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+.word-mastery-adaptive-note {
+  margin: 11px 0 0;
+  padding-top: 10px;
+  border-top: 1px dashed var(--line);
+}
+
+.word-mastery-adaptive-note span {
+  display: inline-grid;
+  width: 21px;
+  height: 21px;
+  margin-right: 5px;
+  place-items: center;
+  border-radius: 7px;
+  background: var(--green-light);
+  color: var(--green);
+  font-weight: 900;
+}
+
 .jlpt-word-path {
   display: grid;
   gap: 11px;
@@ -1849,6 +2023,36 @@ html.android-app .kana-quiz-stage {
 .confidence-dots i.filled {
   background: var(--green);
   box-shadow: 0 0 0 2px rgba(29, 116, 85, 0.12);
+}
+
+.confidence-progress {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.confidence-progress b {
+  min-width: 26px;
+  color: var(--green);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+}
+
+.confidence-meter {
+  display: block;
+  width: 76px;
+  height: 8px;
+  overflow: hidden;
+  border: 1px solid var(--green);
+  border-radius: 99px;
+}
+
+.confidence-meter i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--green);
+  transition: width 260ms ease;
 }
 
 .word-answer-form {
@@ -4752,6 +4956,33 @@ html.android-app .kana-quiz-stage {
     align-items: flex-start;
   }
 
+  .word-mastery-control {
+    padding: 15px;
+  }
+
+  .word-mastery-heading {
+    align-items: flex-start;
+  }
+
+  .word-mastery-value {
+    min-width: 72px;
+    font-size: 20px;
+  }
+
+  .word-mastery-value span {
+    display: block;
+    margin-top: -2px;
+  }
+
+  .word-mastery-caption {
+    display: block;
+  }
+
+  .word-mastery-caption span {
+    display: block;
+    margin-top: 3px;
+  }
+
   .word-level-toolbar {
     gap: 13px;
     padding: 14px;
@@ -5664,9 +5895,39 @@ html.android-app .danger-button {
 
 html.android-app .word-mode-note,
 html.android-app .word-level-toolbar,
+html.android-app .word-mastery-control,
 html.android-app .cycle-explainer,
 html.android-app .pronunciation-lab {
   margin-block: 18px;
+}
+
+html.android-app .word-mastery-control {
+  padding: 14px;
+  border-radius: 15px;
+  box-shadow: 2px 2px 0 var(--shadow-color);
+}
+
+html.android-app .word-mastery-heading strong {
+  font-size: 13px;
+}
+
+html.android-app .word-mastery-heading small {
+  font-size: 8px;
+}
+
+html.android-app .word-mastery-value {
+  min-width: 72px;
+  font-size: 20px;
+}
+
+html.android-app .word-mastery-range-shell input {
+  height: 34px;
+}
+
+html.android-app .word-mastery-range-shell input::-webkit-slider-thumb {
+  width: 27px;
+  height: 27px;
+  margin-top: -10px;
 }
 
 html.android-app .scenario-heading,
