@@ -26,7 +26,7 @@ Eine vollständige, offlinefähige Android-App zum Lesen, Verstehen und Sprechen
 - lokales Usage-Dashboard mit Lernzeit pro Tag, Bereich, Woche, Streak, fälligen Reviews und letzten Einheiten
 - frei einstellbares tägliches Lernzeitziel von 5 Minuten bis 24 Stunden, wählbare Erinnerungszeit und optionale Zielkarte auf dem Lern- und Aktivitäts-Dashboard; zusätzliche Lernzeit bleibt unbegrenzt
 - optionale JLPT-Fortschrittsleiste von N5 bis N1, ausgewogen aus sicher gelernten Kana-Wörtern, Kanji-Wörtern, Kanji und Gesprächen berechnet
-- Hibi-Widget mit vier Emotionen, die sich bis zum drohenden Streak-Verlust steigern
+- responsives Hibi-Widget in vier Größenklassen: schnelle 2×1-Streak-Kachel, Figurenkarte, breite Lernkarte und Detailkarte mit Tagesziel sowie fälligen Wiederholungen; Hibis vier Emotionen steigern sich bis zum drohenden Streak-Verlust
 - Auto-Updater über signierte APKs aus GitHub Releases
 - App-weiter Hell-/Dunkelmodus inklusive Systemleisten, Dashboard, Einstellungen, Dialogen und Widget
 
@@ -71,7 +71,7 @@ Offizielle Versionen werden als signierte APK zusammen mit ihrer SHA-256-Prüfsu
 
 ## Maskottchen
 
-Hibi ist ein eigens für Kana Garten erstellter, KI-generierter Feuergeist. Das Sprite mit allen vier Streak-Stimmungen liegt in [`docs/hibi-mascot-sprite.png`](docs/hibi-mascot-sprite.png).
+Hibi ist ein eigens für Kana Garten erstellter, KI-generierter Feuergeist. Das Sprite mit allen vier Streak-Stimmungen liegt in [`docs/hibi-mascot-sprite.png`](docs/hibi-mascot-sprite.png). Für das responsive Widget werden zusätzlich freigestellte, für Hell- und Dunkelmodus optimierte Varianten verwendet.
 
 ## Lizenz
 

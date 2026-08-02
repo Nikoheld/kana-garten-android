@@ -3,13 +3,13 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@drawable/widget_background_worried"
-    android:padding="8dp">
+    android:padding="10dp">
 
     <ImageView
         android:id="@+id/widget_mascot"
-        android:layout_width="102dp"
+        android:layout_width="140dp"
         android:layout_height="match_parent"
-        android:layout_gravity="start|center_vertical"
+        android:layout_gravity="end|bottom"
         android:background="@drawable/widget_mascot_halo"
         android:contentDescription="@string/hibi_description"
         android:scaleType="centerInside"
@@ -18,7 +18,7 @@
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:layout_marginStart="112dp"
+        android:layout_marginEnd="120dp"
         android:gravity="center_vertical"
         android:orientation="vertical">
 
@@ -28,10 +28,10 @@
             android:layout_height="wrap_content"
             android:fontFamily="sans-serif"
             android:includeFontPadding="false"
-            android:letterSpacing="0.12"
+            android:letterSpacing="0.14"
             android:text="@string/widget_streak_label"
             android:textColor="#69716C"
-            android:textSize="9sp"
+            android:textSize="10sp"
             android:textStyle="bold" />
 
         <TextView
@@ -43,7 +43,7 @@
             android:maxLines="1"
             android:text="@string/widget_streak_empty"
             android:textColor="#17201C"
-            android:textSize="26sp"
+            android:textSize="34sp"
             android:textStyle="bold" />
 
         <TextView
@@ -56,69 +56,62 @@
             android:maxLines="1"
             android:text="@string/widget_streak_start"
             android:textColor="#D94A36"
-            android:textSize="10sp"
+            android:textSize="11sp"
             android:textStyle="bold" />
 
         <TextView
             android:id="@+id/widget_goal_label"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
+            android:layout_marginTop="7dp"
             android:ellipsize="end"
             android:fontFamily="sans-serif"
             android:includeFontPadding="false"
             android:maxLines="1"
             android:text="Heute noch offen"
             android:textColor="#69716C"
-            android:textSize="8sp"
+            android:textSize="9sp"
             android:textStyle="bold" />
 
         <ProgressBar
             android:id="@+id/widget_goal_progress"
             style="?android:attr/progressBarStyleHorizontal"
             android:layout_width="match_parent"
-            android:layout_height="5dp"
-            android:layout_marginTop="2dp"
+            android:layout_height="7dp"
+            android:layout_marginTop="3dp"
             android:max="100"
             android:progress="0"
             android:progressDrawable="@drawable/widget_progress" />
 
-        <LinearLayout
+        <TextView
+            android:id="@+id/widget_review"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:gravity="center_vertical"
-            android:orientation="horizontal">
+            android:layout_marginTop="5dp"
+            android:ellipsize="end"
+            android:fontFamily="sans-serif"
+            android:includeFontPadding="false"
+            android:maxLines="1"
+            android:text="Alles wiederholt"
+            android:textColor="#69716C"
+            android:textSize="9sp"
+            android:textStyle="bold" />
 
-            <TextView
-                android:id="@+id/widget_review"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:ellipsize="end"
-                android:fontFamily="sans-serif"
-                android:includeFontPadding="false"
-                android:maxLines="1"
-                android:text="Alles wiederholt"
-                android:textColor="#69716C"
-                android:textSize="8sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:id="@+id/widget_action"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:background="@drawable/widget_action_background"
-                android:fontFamily="sans-serif"
-                android:includeFontPadding="false"
-                android:paddingStart="7dp"
-                android:paddingTop="3dp"
-                android:paddingEnd="7dp"
-                android:paddingBottom="3dp"
-                android:text="JETZT LERNEN"
-                android:textColor="#FFFFFF"
-                android:textSize="8sp"
-                android:textStyle="bold" />
-        </LinearLayout>
+        <TextView
+            android:id="@+id/widget_action"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:background="@drawable/widget_action_background"
+            android:fontFamily="sans-serif"
+            android:includeFontPadding="false"
+            android:paddingStart="11dp"
+            android:paddingTop="5dp"
+            android:paddingEnd="11dp"
+            android:paddingBottom="5dp"
+            android:text="JETZT LERNEN"
+            android:textColor="#FFFFFF"
+            android:textSize="9sp"
+            android:textStyle="bold" />
     </LinearLayout>
 </FrameLayout>
