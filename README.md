@@ -22,6 +22,8 @@ Eine vollständige, offlinefähige Android-App zum Lesen, Verstehen und Sprechen
 - ein gemeinsamer Spaced-Repetition-Plan für Kana, Wörter, Kanji, Kanji-Wörter, Grammatik und Gespräche; Kana starten nach 10 Minuten, später wachsen die Abstände bis auf 120 Tage
 - native Lern-Erinnerungen zum nächsten fälligen Termin, auch bei geschlossener App und nach einem Geräteneustart
 - vollständig offline gebündelte Inhalte, Datensätze und Noto Sans JP
+- Aussprachetaste auf jeder Kana-, Kana-Wort-, Kanji- und Kanji-Wort-Lernkarte; Android verwendet dafür gezielt eine installierte japanische Offline-Stimme
+- optional einblendbare Kana-Lesehilfen für einzelne Kanji, Satzkontext und Kanji-Wörter; die Auswahl wird dauerhaft gespeichert
 - doppelte Fortschrittssicherung: Web-Speicher plus natives Android-Backup
 - lokales Usage-Dashboard mit Lernzeit pro Tag, Bereich, Woche, Streak, fälligen Reviews und letzten Einheiten
 - frei einstellbares tägliches Lernzeitziel von 5 Minuten bis 24 Stunden, wählbare Erinnerungszeit und optionale Zielkarte auf dem Lern- und Aktivitäts-Dashboard; zusätzliche Lernzeit bleibt unbegrenzt

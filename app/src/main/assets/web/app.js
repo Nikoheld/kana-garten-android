@@ -383,6 +383,7 @@ const DEFAULT_DATA = {
     wordScenarioGroup: "essentials",
     maxKanjiLevel: "N5",
     kanjiSentenceMode: false,
+    kanjiKanaHints: false,
     maxKanjiWordLevel: "N5",
     maxConversationLevel: "N5",
     selectedConversationTopics: ["all"],
@@ -461,6 +462,7 @@ let state = {
   wordScenarioGroup: data.settings.wordScenarioGroup || "essentials",
   maxKanjiLevel: data.settings.maxKanjiLevel || "N5",
   kanjiSentenceMode: Boolean(data.settings.kanjiSentenceMode),
+  kanjiKanaHints: Boolean(data.settings.kanjiKanaHints),
   maxKanjiWordLevel: data.settings.maxKanjiWordLevel || "N5",
   maxConversationLevel: data.settings.maxConversationLevel || "N5",
   selectedConversationTopics: new Set(
@@ -622,6 +624,7 @@ function saveData() {
   data.settings.wordScenarioGroup = state.wordScenarioGroup;
   data.settings.maxKanjiLevel = state.maxKanjiLevel;
   data.settings.kanjiSentenceMode = state.kanjiSentenceMode;
+  data.settings.kanjiKanaHints = state.kanjiKanaHints;
   data.settings.maxKanjiWordLevel = state.maxKanjiWordLevel;
   data.settings.maxConversationLevel = state.maxConversationLevel;
   data.settings.selectedConversationTopics = [
@@ -2079,6 +2082,43 @@ function renderSentenceModeChoice(kind, sentenceMode) {
   `;
 }
 
+function renderKanjiKanaHelpChoice() {
+  return `
+    <div class="sentence-mode-choice kana-help-choice" aria-label="Kana-Lesehilfen bei Kanji">
+      <div class="sentence-mode-copy">
+        <span aria-hidden="true">かな</span>
+        <div>
+          <strong>Kana-Hilfen während der Frage</strong>
+          <small>Optional: Zeigt die Lesung schon vor deiner Antwort. Nach der Antwort bleibt sie immer sichtbar.</small>
+        </div>
+      </div>
+      <div class="sentence-mode-buttons" role="radiogroup" aria-label="Kana-Hilfen wählen">
+        <button type="button" role="radio" aria-checked="${!state.kanjiKanaHints}" class="${state.kanjiKanaHints ? "" : "active"}" data-action="set-kanji-kana-hints" data-enabled="false"><span>漢</span><strong>Aus</strong></button>
+        <button type="button" role="radio" aria-checked="${state.kanjiKanaHints}" class="${state.kanjiKanaHints ? "active" : ""}" data-action="set-kanji-kana-hints" data-enabled="true"><span>かん</span><strong>Anzeigen</strong></button>
+      </div>
+    </div>
+  `;
+}
+
+function renderLearningPronunciation(text, label, rate = 0.82) {
+  const encodedSpeech = encodeURIComponent(String(text || ""));
+  return `
+    <button class="quiz-pronunciation-button" type="button" data-action="speak-learning-item" data-speech-encoded="${encodedSpeech}" data-rate="${rate}" aria-label="${label}">
+      <span class="pronunciation-speaker" aria-hidden="true">🔊</span>
+      <span><strong>${label}</strong><small>Japanische Aussprache</small></span>
+    </button>
+  `;
+}
+
+function renderLiveKanaHelpToggle() {
+  return `
+    <button class="kana-help-live-toggle${state.kanjiKanaHints ? " active" : ""}" type="button" data-action="set-kanji-kana-hints" data-enabled="${!state.kanjiKanaHints}" aria-pressed="${state.kanjiKanaHints}">
+      <span aria-hidden="true">かな</span>
+      <strong>${state.kanjiKanaHints ? "Kana-Hilfe an" : "Kana-Hilfe aus"}</strong>
+    </button>
+  `;
+}
+
 function renderGrammarSetup() {
   const topics = getEligibleGrammar();
   const pickerTopics = getLevelEligibleGrammar();
@@ -2434,6 +2474,8 @@ function renderKanjiWordSetup() {
         <button class="secondary-button" type="button" data-action="start-kanji-word-review" ${dueWords.length ? "" : "disabled"}>${dueWords.length ? "Fällige wiederholen" : "Nichts fällig"}</button>
       </div>
 
+      ${renderKanjiKanaHelpChoice()}
+
       <div class="word-mode-note kanji-word-mode-note" aria-label="Lernmodus">
         <span aria-hidden="true">熟</span>
         <div>
@@ -2520,6 +2562,8 @@ function renderKanjiSetup() {
       </div>
 
       ${renderSentenceModeChoice("kanji", state.kanjiSentenceMode)}
+
+      ${renderKanjiKanaHelpChoice()}
 
       <div class="level-grid" role="radiogroup" aria-label="Maximales Kanji-Level">
         ${KANJI_LEVELS.map((level) => {
@@ -3039,6 +3083,10 @@ function renderWordQuiz() {
           <div class="quiz-kana quiz-word ${lengthClass}" lang="ja">${word.kana}</div>
         </div>
 
+        <div class="learning-card-tools">
+          ${renderLearningPronunciation(word.kana, "Wort anhören", 0.82)}
+        </div>
+
         <div class="word-confidence">${wordConfidenceDots(strength)}</div>
 
         <form class="answer-form word-answer-form" autocomplete="off">
@@ -3348,6 +3396,14 @@ function renderKanjiWordQuiz() {
           <div class="quiz-kana quiz-word quiz-kanji-word ${lengthClass}" lang="ja">${word.spelling}</div>
         </div>
 
+        <div class="kanji-kana-hint" ${state.kanjiKanaHints ? "" : "hidden"}>
+          <small>Kana-Hilfe</small><strong lang="ja">${word.reading}</strong>
+        </div>
+        <div class="learning-card-tools kanji-card-tools">
+          ${renderLearningPronunciation(word.reading, "Wort anhören", 0.82)}
+          ${renderLiveKanaHelpToggle()}
+        </div>
+
         <div class="word-confidence">${wordConfidenceDots(strength)}</div>
         <div class="kanji-word-learning-note" hidden>
           <span><small>Kana-Lesung</small><strong lang="ja">${word.reading}</strong></span>
@@ -3515,9 +3571,14 @@ function speakJapanese(text, rate = 0.9) {
   utterance.lang = "ja-JP";
   utterance.rate = Number(rate) || 0.9;
   utterance.pitch = 1;
-  const japaneseVoice = window.speechSynthesis
-    .getVoices()
-    .find((voice) => voice.lang.toLowerCase().startsWith("ja"));
+  const voices = window.speechSynthesis.getVoices();
+  const japaneseVoice = voices.find((voice) =>
+    voice.lang.toLowerCase().startsWith("ja"),
+  );
+  if (!japaneseVoice && voices.length) {
+    showToast("Bitte installiere auf diesem Gerät eine japanische Stimme.");
+    return;
+  }
   if (japaneseVoice) utterance.voice = japaneseVoice;
   window.speechSynthesis.speak(utterance);
 }
@@ -4636,6 +4697,10 @@ function renderKanjiQuiz() {
   const sentenceContext = session.sentenceMode
     ? getKanjiSentenceContext(kanji)
     : null;
+  const kanaHintText = sentenceContext?.reading || kanji.readings;
+  const pronunciationText = sentenceContext
+    ? sentenceContext.japanese.replace(/<[^>]+>/g, "")
+    : kanji.readings.replaceAll("・", "、");
 
   document.body.classList.add("is-quizzing");
   app.innerHTML = `
@@ -4673,6 +4738,14 @@ function renderKanjiQuiz() {
             <div class="quiz-kana quiz-kanji" lang="ja">${kanji.character}</div>
           </div>
         `}
+
+        <div class="kanji-kana-hint${sentenceContext ? " sentence-kana-hint" : ""}" ${state.kanjiKanaHints ? "" : "hidden"}>
+          <small>Kana-Hilfe</small><strong lang="ja">${kanaHintText}</strong>
+        </div>
+        <div class="learning-card-tools kanji-card-tools">
+          ${renderLearningPronunciation(pronunciationText, sentenceContext ? "Satz anhören" : "Lesungen anhören", sentenceContext ? 0.78 : 0.72)}
+          ${renderLiveKanaHelpToggle()}
+        </div>
 
         <div class="word-confidence">${wordConfidenceDots(strength)}</div>
         <div class="kanji-learning-note" hidden>
@@ -4972,6 +5045,10 @@ function renderQuiz() {
             <div class="quiz-kana${[...kana.glyph].length > 1 ? " quiz-kana-combo" : ""}" lang="ja">${kana.glyph}</div>
           </div>
         `}
+
+        <div class="learning-card-tools">
+          ${renderLearningPronunciation(kana.glyph, "Zeichen anhören", 0.72)}
+        </div>
 
         <div class="mnemonic-tools">
           <button class="mnemonic-button" type="button" data-action="toggle-mnemonic" aria-expanded="false" aria-controls="kana-mnemonic">
@@ -5529,6 +5606,32 @@ document.addEventListener("click", (event) => {
     );
   }
 
+  if (action === "set-kanji-kana-hints") {
+    const scrollPosition = window.scrollY;
+    const enabled = trigger.dataset.enabled === "true";
+    state.kanjiKanaHints = enabled;
+    saveData();
+    if (
+      state.session?.kind === "kanji" ||
+      state.session?.kind === "kanji-words"
+    ) {
+      document.querySelectorAll(".kanji-kana-hint").forEach((hint) => {
+        hint.hidden = !enabled;
+      });
+      trigger.dataset.enabled = String(!enabled);
+      trigger.setAttribute("aria-pressed", String(enabled));
+      trigger.classList.toggle("active", enabled);
+      const label = trigger.querySelector("strong");
+      if (label) label.textContent = enabled ? "Kana-Hilfe an" : "Kana-Hilfe aus";
+      showToast(enabled ? "Kana-Hilfe eingeblendet." : "Kana-Hilfe ausgeblendet.");
+    } else {
+      renderHome();
+      requestAnimationFrame(() =>
+        window.scrollTo({ top: scrollPosition, behavior: "instant" }),
+      );
+    }
+  }
+
   if (action === "set-word-level") {
     const scrollPosition = window.scrollY;
     state.maxWordLevel = trigger.dataset.level;
@@ -5901,6 +6004,17 @@ document.addEventListener("click", (event) => {
   if (action === "continue-conversation") continueConversationSession();
   if (action === "speak-japanese")
     speakJapanese(trigger.dataset.speech || "", trigger.dataset.rate);
+  if (action === "speak-learning-item") {
+    let speech = "";
+    try {
+      speech = decodeURIComponent(trigger.dataset.speechEncoded || "");
+    } catch {
+      speech = trigger.dataset.speechEncoded || "";
+    }
+    speakJapanese(speech, trigger.dataset.rate);
+    trigger.classList.add("is-speaking");
+    window.setTimeout(() => trigger.classList.remove("is-speaking"), 850);
+  }
   if (action === "toggle-recording") toggleConversationRecording();
   if (action === "start-grammar-exercise") startGrammarExercise();
   if (action === "answer-grammar")

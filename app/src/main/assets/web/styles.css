@@ -1700,6 +1700,132 @@ html.android-app .kana-quiz-stage {
   margin-top: 22px;
 }
 
+.learning-card-tools {
+  display: flex;
+  width: min(500px, 100%);
+  align-items: stretch;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 15px;
+}
+
+.quiz-pronunciation-button,
+.kana-help-live-toggle {
+  display: inline-flex;
+  min-height: 43px;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  padding: 6px 13px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: var(--surface-strong);
+  box-shadow: 2px 2px 0 var(--soft-border);
+  color: var(--ink);
+  cursor: pointer;
+  transition: 0.18s ease;
+}
+
+.quiz-pronunciation-button:hover,
+.kana-help-live-toggle:hover,
+.quiz-pronunciation-button.is-speaking {
+  border-color: var(--green);
+  background: var(--green-light);
+  transform: translateY(-1px);
+}
+
+.quiz-pronunciation-button .pronunciation-speaker {
+  display: grid;
+  width: 29px;
+  height: 29px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--green);
+  color: var(--paper-light);
+  font-size: 14px;
+}
+
+.quiz-pronunciation-button > span:last-child,
+.quiz-pronunciation-button strong,
+.quiz-pronunciation-button small {
+  display: block;
+  text-align: left;
+}
+
+.quiz-pronunciation-button strong,
+.kana-help-live-toggle strong {
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.quiz-pronunciation-button small {
+  margin-top: 1px;
+  color: var(--muted);
+  font-size: 7px;
+  font-weight: 700;
+}
+
+.kana-help-live-toggle > span {
+  font-family: "Noto Sans JP", sans-serif;
+  color: var(--red-dark);
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.kana-help-live-toggle.active {
+  border-color: var(--red-button);
+  background: var(--card-red-soft);
+}
+
+.kanji-kana-hint {
+  display: flex;
+  width: min(500px, 100%);
+  min-height: 39px;
+  align-items: baseline;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 13px;
+  padding: 7px 12px;
+  border: 1px dashed var(--red-button);
+  border-radius: 12px;
+  background: var(--card-red-soft);
+}
+
+.kanji-kana-hint[hidden] {
+  display: none;
+}
+
+.kanji-kana-hint small {
+  color: var(--red-dark);
+  font-size: 8px;
+  font-weight: 850;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.kanji-kana-hint strong {
+  font-family: "Noto Sans JP", sans-serif;
+  font-size: 16px;
+  line-height: 1.35;
+}
+
+.sentence-kana-hint {
+  align-items: flex-start;
+}
+
+.sentence-kana-hint strong {
+  font-size: 13px;
+}
+
+.learning-card-tools + .word-confidence,
+.kanji-kana-hint + .learning-card-tools {
+  margin-top: 11px;
+}
+
+.learning-card-tools + .mnemonic-tools {
+  margin-top: 12px;
+}
+
 .confidence-label {
   color: var(--muted);
   font-size: 9px;
@@ -5651,6 +5777,33 @@ html.android-app .mnemonic-tools {
   margin-top: 12px;
 }
 
+html.android-app .learning-card-tools,
+html.android-app .kanji-kana-hint {
+  width: 100%;
+}
+
+html.android-app .learning-card-tools {
+  gap: 6px;
+  margin-top: 10px;
+}
+
+html.android-app .quiz-pronunciation-button,
+html.android-app .kana-help-live-toggle {
+  min-width: 0;
+  min-height: 42px;
+  flex: 1 1 0;
+  padding-inline: 9px;
+}
+
+html.android-app .quiz-pronunciation-button .pronunciation-speaker {
+  width: 27px;
+  height: 27px;
+}
+
+html.android-app .kanji-kana-hint {
+  margin-top: 10px;
+}
+
 html.android-app .mnemonic-button {
   min-height: 40px;
 }
@@ -5729,6 +5882,16 @@ html.android-app .result-card h1 {
   border: 1.5px solid var(--ink);
   border-radius: 16px;
   background: var(--surface-soft);
+}
+
+.kana-help-choice {
+  border-color: var(--red-button);
+}
+
+.kana-help-choice .sentence-mode-copy > span {
+  background: var(--card-red-soft);
+  color: var(--red-dark);
+  font-size: 15px;
 }
 
 .sentence-mode-copy {
