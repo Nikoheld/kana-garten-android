@@ -22,6 +22,7 @@ import android.os.Bundle;
 import android.os.Build;
 import android.provider.Settings;
 import android.speech.tts.TextToSpeech;
+import android.speech.tts.Voice;
 import android.text.SpannableString;
 import android.text.Spanned;
 import android.text.style.AbsoluteSizeSpan;
@@ -68,6 +69,7 @@ public final class MainActivity extends Activity {
     private View currentView;
     private UsageStore usageStore;
     private TextToSpeech textToSpeech;
+    private boolean japaneseSpeechReady;
     private PermissionRequest pendingAudioPermission;
     private boolean learningActive;
     private int selectedTab;
@@ -781,16 +783,38 @@ public final class MainActivity extends Activity {
     private void initializeTextToSpeech() {
         textToSpeech = new TextToSpeech(this, status -> {
             if (status == TextToSpeech.SUCCESS) {
-                textToSpeech.setLanguage(Locale.JAPAN);
+                int language = textToSpeech.setLanguage(Locale.JAPAN);
+                if (language == TextToSpeech.LANG_MISSING_DATA
+                    || language == TextToSpeech.LANG_NOT_SUPPORTED) {
+                    japaneseSpeechReady = false;
+                    return;
+                }
+                Voice bestOfflineVoice = null;
+                java.util.Set<Voice> voices = textToSpeech.getVoices();
+                if (voices != null) {
+                    for (Voice voice : voices) {
+                        if (!Locale.JAPAN.getLanguage().equals(voice.getLocale().getLanguage())
+                            || voice.isNetworkConnectionRequired()) {
+                            continue;
+                        }
+                        if (bestOfflineVoice == null || voice.getQuality() > bestOfflineVoice.getQuality()) {
+                            bestOfflineVoice = voice;
+                        }
+                    }
+                }
+                japaneseSpeechReady = bestOfflineVoice != null;
+                if (bestOfflineVoice != null) textToSpeech.setVoice(bestOfflineVoice);
             }
         });
     }
 
     private void speakJapanese(String text, double rate) {
         runOnUiThread(() -> {
-            if (textToSpeech == null) return;
-            int language = textToSpeech.setLanguage(Locale.JAPAN);
-            if (language == TextToSpeech.LANG_MISSING_DATA || language == TextToSpeech.LANG_NOT_SUPPORTED) {
+            if (textToSpeech == null) {
+                Toast.makeText(this, "Die japanische Sprachausgabe wird vorbereitet.", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            if (!japaneseSpeechReady) {
                 Toast.makeText(this, "Bitte installiere in Android einmalig die japanische Offline-Stimme.", Toast.LENGTH_LONG).show();
                 return;
             }
