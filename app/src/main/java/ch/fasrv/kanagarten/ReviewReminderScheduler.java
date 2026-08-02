@@ -38,7 +38,7 @@ final class ReviewReminderScheduler {
                 "Lern-Wiederholungen",
                 NotificationManager.IMPORTANCE_DEFAULT
             );
-            channel.setDescription("Erinnert dich, sobald gelernte Kana, Wörter, Kanji oder Gespräche fällig sind.");
+            channel.setDescription("Erinnert dich, sobald gelernte Kana, Wörter, Kanji, Grammatik oder Gespräche fällig sind.");
             channel.enableVibration(true);
             manager.createNotificationChannel(channel);
         }
@@ -154,7 +154,7 @@ final class ReviewReminderScheduler {
         if (json == null || json.length() < 2) return summary;
         try {
             JSONObject progress = new JSONObject(json);
-            String[] groups = {"kana", "words", "kanji", "kanjiWords", "conversations"};
+            String[] groups = {"kana", "words", "kanji", "kanjiWords", "conversations", "grammar"};
             for (String group : groups) {
                 JSONObject entries = progress.optJSONObject(group);
                 if (entries == null) continue;
@@ -192,6 +192,7 @@ final class ReviewReminderScheduler {
         int kanji;
         int kanjiWords;
         int conversations;
+        int grammar;
 
         boolean hasScheduledItems() {
             return earliestReviewAt != Long.MAX_VALUE;
@@ -204,6 +205,7 @@ final class ReviewReminderScheduler {
                 case "kanji": kanji++; break;
                 case "kanjiWords": kanjiWords++; break;
                 case "conversations": conversations++; break;
+                case "grammar": grammar++; break;
                 default: break;
             }
         }
@@ -215,6 +217,7 @@ final class ReviewReminderScheduler {
             append(text, kanji, "Kanji");
             append(text, kanjiWords, "Kanji-Wörter");
             append(text, conversations, "Gespräche");
+            append(text, grammar, "Grammatik");
             return text.length() == 0 ? "Deine nächste Lernrunde wartet." : text.toString();
         }
 

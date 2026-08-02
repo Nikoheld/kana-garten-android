@@ -139,6 +139,7 @@ public final class UsageStore {
         secondsByMode.put("kanji", 0);
         secondsByMode.put("kanji-words", 0);
         secondsByMode.put("conversation", 0);
+        secondsByMode.put("grammar", 0);
 
         int weekSeconds = 0;
         int totalSeconds = 0;
@@ -212,7 +213,7 @@ public final class UsageStore {
             JSONObject progress = new JSONObject(json);
             long now = System.currentTimeMillis();
             int due = 0;
-            String[] groups = {"kana", "words", "kanji", "kanjiWords", "conversations"};
+            String[] groups = {"kana", "words", "kanji", "kanjiWords", "conversations", "grammar"};
             for (String group : groups) {
                 JSONObject entries = progress.optJSONObject(group);
                 if (entries == null) continue;
@@ -267,6 +268,7 @@ public final class UsageStore {
             case "kanji":
             case "kanji-words":
             case "conversation":
+            case "grammar":
             case "kana":
                 return mode;
             default:
@@ -309,6 +311,7 @@ public final class UsageStore {
             case "kanji": return "Kanji";
             case "kanji-words": return "Kanji-Wörter";
             case "conversation": return "Gespräche";
+            case "grammar": return "Grammatik";
             default: return "Kana lesen";
         }
     }
