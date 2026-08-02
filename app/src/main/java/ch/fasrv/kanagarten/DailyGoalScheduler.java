@@ -46,7 +46,13 @@ final class DailyGoalScheduler {
         PendingIntent alarm = alarmIntent(appContext);
         alarms.cancel(alarm);
 
-        UsageStore.GoalSettings settings = new UsageStore(appContext).goalSettings();
+        UsageStore store = new UsageStore(appContext);
+        UsageStore.GoalSettings settings = store.goalSettings();
+        boolean reachedToday = store.todaySeconds() >= settings.dailyGoalMinutes * 60;
+        NotificationManager notifications = appContext.getSystemService(NotificationManager.class);
+        if (!settings.dailyGoalEnabled || reachedToday) {
+            if (notifications != null) notifications.cancel(NOTIFICATION_ID);
+        }
         if (!settings.dailyGoalEnabled || !areNotificationsAllowed(appContext)) return;
 
         ZonedDateTime now = ZonedDateTime.now();
@@ -56,6 +62,9 @@ final class DailyGoalScheduler {
             .withSecond(0)
             .withNano(0);
         if (!target.isAfter(now)) target = target.plusDays(1);
+        if (reachedToday && target.toLocalDate().equals(now.toLocalDate())) {
+            target = target.plusDays(1);
+        }
         alarms.setAndAllowWhileIdle(
             AlarmManager.RTC_WAKEUP,
             target.toInstant().toEpochMilli(),
