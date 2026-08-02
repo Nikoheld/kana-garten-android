@@ -17,6 +17,7 @@ import {
   GRAMMAR_LEVELS,
 } from "./grammar.js?v=20260802-v1";
 import { getKanaMnemonic } from "./mnemonics.js?v=20260723-v2";
+import { BUNDLED_PRONUNCIATION_AUDIO } from "./pronunciation-audio.js?v=1.11.3";
 
 const GROUPS = [
   {
@@ -508,6 +509,7 @@ let activeMediaStream = null;
 let recordedAudioUrl = null;
 let recordingTimer = null;
 let recordingStartedAt = 0;
+let activeBundledAudio = null;
 
 function getSavedTheme() {
   try {
@@ -3806,7 +3808,7 @@ function finishKanjiWordSession() {
   renderKanjiWordResult();
 }
 
-function speakJapanese(text, rate = 0.9) {
+function speakWithDeviceVoice(text, rate = 0.9) {
   if (window.Android?.speakJapanese) {
     window.Android.speakJapanese(text, Number(rate) || 0.9);
     return;
@@ -3830,6 +3832,35 @@ function speakJapanese(text, rate = 0.9) {
   }
   if (japaneseVoice) utterance.voice = japaneseVoice;
   window.speechSynthesis.speak(utterance);
+}
+
+function speakJapanese(text, rate = 0.9) {
+  const speech = String(text || "").trim();
+  const bundledPath = BUNDLED_PRONUNCIATION_AUDIO[speech];
+  if (!bundledPath) {
+    speakWithDeviceVoice(speech, rate);
+    return;
+  }
+
+  window.speechSynthesis?.cancel();
+  if (window.Android?.playBundledPronunciation) {
+    window.Android.playBundledPronunciation(bundledPath);
+    return;
+  }
+
+  if (activeBundledAudio) {
+    activeBundledAudio.pause();
+    activeBundledAudio.currentTime = 0;
+  }
+  const audio = new Audio(bundledPath);
+  activeBundledAudio = audio;
+  audio.addEventListener("ended", () => {
+    if (activeBundledAudio === audio) activeBundledAudio = null;
+  }, { once: true });
+  audio.play().catch(() => {
+    if (activeBundledAudio === audio) activeBundledAudio = null;
+    speakWithDeviceVoice(speech, rate);
+  });
 }
 
 function releaseConversationMedia({ keepRecording = false } = {}) {
