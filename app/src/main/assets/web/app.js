@@ -6,7 +6,11 @@ import {
 } from "./vocabulary.js?v=20260801-scenarios";
 import { KANJI, KANJI_LEVELS } from "./kanji.js?v=20260723-manga";
 import { KANJI_VOCABULARY, KANJI_WORD_LEVELS } from "./kanji-vocabulary.js?v=20260801-v1";
-import { CONVERSATIONS, CONVERSATION_LEVELS } from "./conversations.js?v=20260801-v1";
+import {
+  CONVERSATIONS,
+  CONVERSATION_LEVELS,
+  CONVERSATION_TOPICS,
+} from "./conversations.js?v=20260802-speaking-v2";
 import { getKanaMnemonic } from "./mnemonics.js?v=20260723-v2";
 
 const GROUPS = [
@@ -371,6 +375,10 @@ const DEFAULT_DATA = {
     maxKanjiLevel: "N5",
     maxKanjiWordLevel: "N5",
     maxConversationLevel: "N5",
+    selectedConversationTopics: ["all"],
+    includedConversationIds: [],
+    excludedConversationIds: [],
+    conversationPracticeMode: "roleplay",
   },
 };
 
@@ -426,6 +434,19 @@ let state = {
   maxKanjiLevel: data.settings.maxKanjiLevel || "N5",
   maxKanjiWordLevel: data.settings.maxKanjiWordLevel || "N5",
   maxConversationLevel: data.settings.maxConversationLevel || "N5",
+  selectedConversationTopics: new Set(
+    data.settings.selectedConversationTopics?.length
+      ? data.settings.selectedConversationTopics
+      : ["all"],
+  ),
+  includedConversationIds: new Set(
+    data.settings.includedConversationIds || [],
+  ),
+  excludedConversationIds: new Set(
+    data.settings.excludedConversationIds || [],
+  ),
+  conversationPracticeMode:
+    data.settings.conversationPracticeMode || "roleplay",
   selectedRows: new Set(data.settings.selectedRows?.length ? data.settings.selectedRows : ["vowels"]),
   session: null,
   lastResult: null,
@@ -435,6 +456,8 @@ let pendingConfirmation = null;
 let activeMediaRecorder = null;
 let activeMediaStream = null;
 let recordedAudioUrl = null;
+let recordingTimer = null;
+let recordingStartedAt = 0;
 
 function getSavedTheme() {
   try {
@@ -533,6 +556,16 @@ function saveData() {
   data.settings.maxKanjiLevel = state.maxKanjiLevel;
   data.settings.maxKanjiWordLevel = state.maxKanjiWordLevel;
   data.settings.maxConversationLevel = state.maxConversationLevel;
+  data.settings.selectedConversationTopics = [
+    ...state.selectedConversationTopics,
+  ];
+  data.settings.includedConversationIds = [
+    ...state.includedConversationIds,
+  ];
+  data.settings.excludedConversationIds = [
+    ...state.excludedConversationIds,
+  ];
+  data.settings.conversationPracticeMode = state.conversationPracticeMode;
   const serialized = JSON.stringify(data);
   localStorage.setItem(STORAGE_KEY, serialized);
   window.Android?.backupProgress?.(serialized);
@@ -803,13 +836,36 @@ function getHardKanjiWords(limit = 20) {
     .slice(0, limit);
 }
 
-function getEligibleConversations() {
+function getLevelEligibleConversations() {
   const maxIndex = CONVERSATION_LEVELS.findIndex(
     (level) => level.id === state.maxConversationLevel,
   );
   return CONVERSATIONS.filter(
     (conversation) => conversation.levelIndex <= Math.max(0, maxIndex),
   ).sort((a, b) => a.frequency - b.frequency);
+}
+
+function getSelectedConversationIdSet() {
+  const levelEligible = getLevelEligibleConversations();
+  const selected = new Set(state.includedConversationIds);
+  if (state.selectedConversationTopics.has("all")) {
+    levelEligible.forEach((conversation) => selected.add(conversation.id));
+  } else {
+    levelEligible
+      .filter((conversation) =>
+        state.selectedConversationTopics.has(conversation.topic),
+      )
+      .forEach((conversation) => selected.add(conversation.id));
+  }
+  state.excludedConversationIds.forEach((id) => selected.delete(id));
+  return selected;
+}
+
+function getEligibleConversations() {
+  const selectedIds = getSelectedConversationIdSet();
+  return getLevelEligibleConversations().filter((conversation) =>
+    selectedIds.has(conversation.id),
+  );
 }
 
 function getConversationStrength(conversationId) {
@@ -834,13 +890,29 @@ function getConversationLevelStats(levelId) {
 
 function isConversationReviewDue(conversation) {
   const stat = data.conversations[conversation.id];
-  if (!stat || Number(stat.strength || 0) < 3) return false;
+  if (!stat || Number(stat.peakStrength || 0) < 3) return false;
   if (stat.nextReviewAt) return Date.now() >= Number(stat.nextReviewAt);
   return (
     Number(data.conversationPromptCount || 0) -
       Number(stat.lastPrompt || 0) >=
     reviewInterval(stat.strength)
   );
+}
+
+function getGlobalConversationReviews(dueOnly = true) {
+  return CONVERSATIONS.filter((conversation) => {
+    const stat = data.conversations[conversation.id];
+    if (!stat || Number(stat.peakStrength || 0) < 3) return false;
+    return !dueOnly || isConversationReviewDue(conversation);
+  }).sort((a, b) => {
+    const aStat = data.conversations[a.id] || {};
+    const bStat = data.conversations[b.id] || {};
+    const dueDifference =
+      Number(aStat.nextReviewAt || aStat.lastPracticed || 0) -
+      Number(bStat.nextReviewAt || bStat.lastPracticed || 0);
+    if (dueDifference) return dueDifference;
+    return conversationDifficultyScore(b.id) - conversationDifficultyScore(a.id);
+  });
 }
 
 function getConversationStats() {
@@ -862,11 +934,12 @@ function getConversationStats() {
     seen,
     correct,
     accuracy: formatPercent(correct, seen),
-    reviewDue: eligible.filter(isConversationReviewDue).length,
+    reviewDue: getGlobalConversationReviews().length,
   };
 }
 
-function recordConversationAttempt(conversation, wasConfident) {
+function recordConversationAttempt(conversation, rating) {
+  const wasConfident = rating >= 3;
   data.conversationPromptCount =
     Number(data.conversationPromptCount || 0) + 1;
   const stat = data.conversations[conversation.id] || {
@@ -875,17 +948,22 @@ function recordConversationAttempt(conversation, wasConfident) {
     wrong: 0,
     strength: 0,
     peakStrength: 0,
+    partial: 0,
+    scoreSum: 0,
   };
   stat.seen += 1;
+  stat.scoreSum = Number(stat.scoreSum || 0) + rating;
   stat.lastPracticed = Date.now();
   stat.lastPrompt = data.conversationPromptCount;
   if (wasConfident) {
     stat.correct += 1;
-    stat.strength = Math.min(5, Number(stat.strength || 0) + 1);
+    stat.strength = Math.min(10, Number(stat.strength || 0) + 1);
     stat.peakStrength = Math.max(
       Number(stat.peakStrength || 0),
       stat.strength,
     );
+  } else if (rating === 2) {
+    stat.partial = Number(stat.partial || 0) + 1;
   } else {
     stat.wrong += 1;
     stat.strength = Math.max(0, Number(stat.strength || 0) - 1);
@@ -1255,7 +1333,7 @@ function renderHome() {
         ? "Wörter, die wirklich <em>bleiben.</em>"
         : "Kana, die endlich <em>sitzen.</em>";
   const heroCopy = isConversation
-    ? "Übe echte Gesprächssituationen, höre die Aussprache, erkenne Satzmelodie und Mora-Rhythmus und vergleiche deine eigene Aufnahme. Vom ersten Kennenlernen bis zur differenzierten Diskussion."
+    ? "Trainiere 50 echte Gesprächssituationen als Rollenspiel, geführt oder mit Shadowing. Nimm dich auf, übe einzelne Sinnabschnitte und vergleiche Inhalt, Verständlichkeit und Rhythmus – vom ersten Kennenlernen bis zur differenzierten Diskussion."
     : isKanjiWords
     ? "Erkenne ganze Wörter mit Kanji, schreibe die deutsche Bedeutung und verknüpfe danach die Kana-Lesung. Von grundlegenden N5-Wörtern bis zu abstraktem N1-Wortschatz."
     : isKanji
@@ -1698,16 +1776,20 @@ function renderKanjiSetup() {
 
 function renderConversationSetup() {
   const conversations = getEligibleConversations();
+  const levelEligible = getLevelEligibleConversations();
+  const selectedIds = getSelectedConversationIdSet();
+  const dueConversations = getGlobalConversationReviews();
+  const learnedConversations = getGlobalConversationReviews(false);
   const maxLevelIndex = CONVERSATION_LEVELS.findIndex(
     (level) => level.id === state.maxConversationLevel,
   );
   const pronunciationLabs = [
     {
       icon: "高低",
-      title: "Tonhöhe statt Wortakzent",
-      japanese: "雨が降ります。飴を食べます。",
-      pattern: "L→H↓L · L→H",
-      copy: "Japanisch unterscheidet Wörter durch hohe und tiefe Tonlagen – nicht durch lauten deutschen Druckakzent.",
+      title: "Tonhöhe statt Druck",
+      japanese: "雨です。飴です。",
+      pattern: "あめ: H–L｜あめ: L–H (Tokyo)",
+      copy: "Japanisch organisiert Wörter mit hohen und tiefen Tönen. Sprich den Unterschied nicht lauter, sondern ändere die Tonhöhe.",
     },
     {
       icon: "拍",
@@ -1731,11 +1813,18 @@ function renderConversationSetup() {
       copy: "Ein zu kurzer langer Vokal kann die Bedeutung ändern. Klatsche jede Mora einmal mit.",
     },
     {
-      icon: "↗",
-      title: "Natürliche Satzmelodie",
+      icon: "息",
+      title: "Leichte unbetonte Vokale",
+      japanese: "好きです。聞きました。",
+      pattern: "su-ki de-su｜ki-ki-ma-shi-ta",
+      copy: "i und u können zwischen stimmlosen Lauten sehr leise werden. Die Mora bleibt rhythmisch trotzdem vorhanden.",
+    },
+    {
+      icon: "句",
+      title: "Phrasen statt Wortsalat",
       japanese: "駅はどこですか。駅はここです。",
-      pattern: "Frage ↗｜Aussage ↘",
-      copy: "Fragen steigen am Ende oft leicht an; abgeschlossene Aussagen fallen ruhig ab.",
+      pattern: "駅は｜どこですか。駅は｜ここです。",
+      copy: "Gliedere nach Sinn. Eine Frage muss nicht deutsch stark ansteigen; Partikel, Pausen und ein klarer Schluss tragen die Absicht.",
     },
   ];
 
@@ -1744,24 +1833,24 @@ function renderConversationSetup() {
       <div class="section-heading">
         <div>
           <span class="eyebrow">Dein Gesprächstraining</span>
-          <h2 id="setup-title">Hören. Nachsprechen. Frei antworten.</h2>
+          <h2 id="setup-title">Hören. Reagieren. Vergleichen. Festigen.</h2>
         </div>
-        <p>Du reagierst auf echte Situationen, vergleichst deine Stimme mit dem Hörbeispiel und bewertest ehrlich, ob die Antwort schon sicher sitzt.</p>
+        <p>Wähle Themen und Trainingsart. Jede Situation führt dich vom echten Gesprächsimpuls über deine eigene Aufnahme bis zu einem konkreten Aussprachevergleich.</p>
       </div>
 
       <div class="conversation-method-note">
         <span aria-hidden="true">会</span>
         <div>
-          <strong>Praktisch vorbereitet – vom Bahnhof bis zur Besprechung</strong>
-          <small>Die JLPT-Stufen ordnen hier die sprachliche Komplexität. Der JLPT selbst enthält keine Sprechprüfung.</small>
+          <strong>50 praktische Situationen – vom ersten Satz bis zur souveränen Diskussion</strong>
+          <small>Keine automatische Punktzahl täuscht Präzision vor: Du vergleichst Inhalt, Verständlichkeit und Rhythmus anhand einer klaren Rubrik.</small>
         </div>
         <div class="privacy-pill"><span aria-hidden="true">●</span> Aufnahmen bleiben im Browser</div>
       </div>
 
       <section class="pronunciation-lab" aria-labelledby="pronunciation-title">
         <div class="pronunciation-heading">
-          <div><span class="eyebrow">Aussprache-Lab</span><h3 id="pronunciation-title">Die fünf Muster, die natürliches Japanisch tragen.</h3></div>
-          <p>東京-Standard als Lernhilfe. Regionale Akzente dürfen anders klingen.</p>
+          <div><span class="eyebrow">Aussprache-Lab</span><h3 id="pronunciation-title">Sechs Muster, die natürliches Japanisch tragen.</h3></div>
+          <p>Tokyo-Standard als Orientierung. Regionale Akzente sind natürlich; Geräte-Stimmen sind ein Modell, keine Messung deiner Aussprache.</p>
         </div>
         <div class="pronunciation-grid">
           ${pronunciationLabs
@@ -1780,6 +1869,27 @@ function renderConversationSetup() {
               `,
             )
             .join("")}
+        </div>
+      </section>
+
+      <section class="speaking-mode-section" aria-labelledby="speaking-mode-title">
+        <div class="conversation-path-heading compact-heading">
+          <div><span class="eyebrow">Trainingsart</span><h3 id="speaking-mode-title">Wie viel Hilfe möchtest du?</h3></div>
+          <p>Du kannst jederzeit wechseln. Der Fortschritt gehört zur Situation und bleibt in allen Trainingsarten erhalten.</p>
+        </div>
+        <div class="speaking-mode-grid" role="radiogroup" aria-label="Trainingsart wählen">
+          ${[
+            ["roleplay", "会", "Rollenspiel", "Erst frei reagieren, dann mit dem Modell vergleichen."],
+            ["guided", "組", "Geführt", "Bei Bedarf Satzbausteine öffnen und selbst zusammensetzen."],
+            ["shadowing", "影", "Shadowing", "Modell direkt hören und nahezu gleichzeitig nachsprechen."],
+          ].map(([id, icon, title, copy]) => {
+            const active = state.conversationPracticeMode === id;
+            return `
+              <button class="speaking-mode-card${active ? " active" : ""}" type="button" role="radio" aria-checked="${active}" data-action="set-conversation-mode" data-mode="${id}">
+                <span aria-hidden="true">${icon}</span><strong>${title}</strong><small>${copy}</small><em>${active ? "Ausgewählt" : "Wählen"}</em>
+              </button>
+            `;
+          }).join("")}
         </div>
       </section>
 
@@ -1821,20 +1931,78 @@ function renderConversationSetup() {
         }).join("")}
       </div>
 
+      <section class="conversation-topic-section" aria-labelledby="conversation-topic-title">
+        <div class="conversation-path-heading compact-heading">
+          <div><span class="eyebrow">Szenarien</span><h3 id="conversation-topic-title">Was möchtest du sprechen können?</h3></div>
+          <p>Mehrere Themen lassen sich kombinieren. Unter „Einzelne Situationen“ kannst du die Auswahl fein anpassen.</p>
+        </div>
+        <div class="conversation-topic-grid">
+          ${CONVERSATION_TOPICS.map((topic) => {
+            const topicItems = topic.id === "all"
+              ? levelEligible
+              : levelEligible.filter((conversation) => conversation.topic === topic.id);
+            const active = state.selectedConversationTopics.has(topic.id);
+            return `
+              <button class="conversation-topic-card${active ? " active" : ""}" type="button" data-action="toggle-conversation-topic" data-topic="${topic.id}" aria-pressed="${active}" ${topicItems.length ? "" : "disabled"}>
+                <span aria-hidden="true">${topic.icon}</span>
+                <span><strong>${topic.title}</strong><small>${topic.description}</small></span>
+                <em>${topicItems.length}</em>
+              </button>
+            `;
+          }).join("")}
+        </div>
+
+        <details class="individual-word-picker conversation-picker">
+          <summary>
+            <span><strong>Einzelne Situationen auswählen</strong><small>Auswahl durchsuchen, hinzufügen oder abwählen</small></span>
+            <b>Öffnen</b>
+          </summary>
+          <div class="word-picker-tools">
+            <label class="word-search-shell" for="conversation-search"><span aria-hidden="true">⌕</span><input id="conversation-search" type="search" placeholder="Situation oder deutscher Satz …" autocomplete="off"></label>
+            <span><b id="conversation-visible-count">${levelEligible.length}</b> Situationen sichtbar</span>
+          </div>
+          <div class="individual-word-grid individual-conversation-grid" id="individual-conversation-grid">
+            ${levelEligible.map((conversation) => {
+              const active = selectedIds.has(conversation.id);
+              const topic = CONVERSATION_TOPICS.find((entry) => entry.id === conversation.topic);
+              const search = `${conversation.situation} ${conversation.german} ${conversation.target} ${conversation.level}`.toLowerCase();
+              return `
+                <button class="individual-word individual-conversation${active ? " selected" : ""}" type="button" data-action="toggle-conversation" data-conversation="${conversation.id}" data-search="${search}" aria-pressed="${active}">
+                  <span lang="ja">${topic?.icon || "会"}</span>
+                  <b>${conversation.situation}</b><small>${conversation.level} · ${topic?.title || "Gespräch"}</small>
+                  <em aria-hidden="true">${active ? "✓" : "+"}</em>
+                </button>
+              `;
+            }).join("")}
+          </div>
+          <p class="word-search-empty" id="conversation-search-empty" hidden>Keine passende Situation gefunden.</p>
+        </details>
+      </section>
+
+      <div class="srs-pot-card conversation-srs-card">
+        <div class="srs-pot-icon" aria-hidden="true">声</div>
+        <div>
+          <span class="eyebrow">Globaler Sprech-Wiederholungstopf</span>
+          <strong>${dueConversations.length ? `${dueConversations.length} ${dueConversations.length === 1 ? "Situation ist" : "Situationen sind"} fällig` : learnedConversations.length ? "Alles ist für heute frisch" : "Dein Langzeitgedächtnis startet hier"}</strong>
+          <p>${learnedConversations.length} sicher gelernte Situationen bleiben unabhängig von Themenwahl und Level im Wiederholungsplan.</p>
+        </div>
+        <button type="button" data-action="start-conversation-review" ${dueConversations.length ? "" : "disabled"}>${dueConversations.length ? "Fällige Gespräche üben" : "Nichts fällig"} <span aria-hidden="true">→</span></button>
+      </div>
+
       <div class="cycle-explainer conversation-cycle-explainer">
         <div class="cycle-visual conversation-cycle-visual" aria-hidden="true">
           <span>挨拶</span><span>注文</span><span>道案内</span><span>会話</span>
         </div>
         <div>
-          <strong>Vier Situationen. Drei sichere Sprechdurchgänge.</strong>
-          <p>Unsichere Antworten kommen in derselben Runde wieder. Gefestigte Gespräche bleiben erhalten und tauchen später automatisch zur Langzeit-Wiederholung auf.</p>
+          <strong>Vier Situationen. Klare Rückmeldung statt Bauchgefühl.</strong>
+          <p>Bewerte Inhalt, Verständlichkeit und Rhythmus. „Fast sicher“ und „Noch üben“ erscheinen später erneut; nach jeder Bewertung entscheidest du selbst, wann es weitergeht.</p>
         </div>
       </div>
 
       <div class="start-bar">
         <div class="selection-count"><strong>${conversations.length}</strong> <span>Gespräche · ${state.maxConversationLevel === "N5" ? "Grundstufe N5" : `N5 bis ${state.maxConversationLevel}`}</span></div>
-        <button class="primary-button" type="button" data-action="start-conversation-session">
-          Gesprächstraining starten <span aria-hidden="true">→</span>
+        <button class="primary-button" type="button" data-action="start-conversation-session" ${conversations.length ? "" : "disabled"}>
+          ${state.conversationPracticeMode === "shadowing" ? "Shadowing starten" : state.conversationPracticeMode === "guided" ? "Geführt sprechen" : "Rollenspiel starten"} <span aria-hidden="true">→</span>
         </button>
       </div>
     </section>
@@ -2564,6 +2732,11 @@ function speakJapanese(text, rate = 0.9) {
 
 function releaseConversationMedia({ keepRecording = false } = {}) {
   window.speechSynthesis?.cancel();
+  if (recordingTimer) {
+    window.clearInterval(recordingTimer);
+    recordingTimer = null;
+  }
+  recordingStartedAt = 0;
   if (!keepRecording && activeMediaRecorder?.state === "recording") {
     activeMediaRecorder.ondataavailable = null;
     activeMediaRecorder.onstop = null;
@@ -2584,6 +2757,10 @@ async function toggleConversationRecording() {
   const button = document.querySelector('[data-action="toggle-recording"]');
   const status = document.querySelector("#recording-status");
   if (activeMediaRecorder?.state === "recording") {
+    if (recordingTimer) {
+      window.clearInterval(recordingTimer);
+      recordingTimer = null;
+    }
     activeMediaRecorder.stop();
     if (button) button.innerHTML = '<span aria-hidden="true">●</span> Neu aufnehmen';
     if (status) status.textContent = "Aufnahme wird vorbereitet …";
@@ -2602,6 +2779,10 @@ async function toggleConversationRecording() {
       if (event.data.size) chunks.push(event.data);
     });
     activeMediaRecorder.addEventListener("stop", () => {
+      if (recordingTimer) {
+        window.clearInterval(recordingTimer);
+        recordingTimer = null;
+      }
       const mimeType = activeMediaRecorder?.mimeType || "audio/webm";
       const blob = new Blob(chunks, { type: mimeType });
       if (recordedAudioUrl) URL.revokeObjectURL(recordedAudioUrl);
@@ -2617,15 +2798,36 @@ async function toggleConversationRecording() {
       const currentStatus = document.querySelector("#recording-status");
       if (currentStatus)
         currentStatus.textContent =
-          "Fertig – höre dich an und vergleiche Rhythmus und Satzmelodie.";
+          "Fertig – höre erst dich, dann das Modell und vergleiche gezielt.";
+      const timerLabel = document.querySelector("#recording-time");
+      if (timerLabel && recordingStartedAt) {
+        const seconds = Math.max(1, Math.round((Date.now() - recordingStartedAt) / 1000));
+        timerLabel.textContent = `${seconds} s`;
+      }
+      document.querySelector(".recording-visualizer")?.classList.remove("active");
+      recordingStartedAt = 0;
     });
     activeMediaRecorder.start();
+    recordingStartedAt = Date.now();
+    const updateRecordingTime = () => {
+      const timerLabel = document.querySelector("#recording-time");
+      if (timerLabel)
+        timerLabel.textContent = `${Math.floor((Date.now() - recordingStartedAt) / 1000)} s`;
+    };
+    updateRecordingTime();
+    recordingTimer = window.setInterval(updateRecordingTime, 250);
+    document.querySelector(".recording-visualizer")?.classList.add("active");
     if (button)
       button.innerHTML = '<span aria-hidden="true">■</span> Aufnahme stoppen';
     if (status)
       status.textContent =
         "Aufnahme läuft … Sprich deine Antwort in normalem Tempo.";
   } catch {
+    if (recordingTimer) {
+      window.clearInterval(recordingTimer);
+      recordingTimer = null;
+    }
+    recordingStartedAt = 0;
     activeMediaStream?.getTracks().forEach((track) => track.stop());
     activeMediaStream = null;
     activeMediaRecorder = null;
@@ -2739,13 +2941,19 @@ function startConversationSession(conversationPool = null, sourceOverride = null
     mastered: new Set(),
     reviewedIds: new Set(),
     maintenance,
+    reviewOnly: sourceOverride === "conversation-review",
+    practiceMode: state.conversationPracticeMode,
     attempts: 0,
     correctAttempts: 0,
+    partialAttempts: 0,
     wrongAttempts: 0,
     mistakesById: {},
     startedAt: Date.now(),
     revealed: false,
+    hintVisible: false,
     locked: false,
+    awaitingAdvance: false,
+    lastRating: null,
   };
   state.view = "quiz";
   advanceConversationSession();
@@ -2758,6 +2966,15 @@ function startHardConversationSession() {
     return;
   }
   startConversationSession(hardConversations, "hard-conversations");
+}
+
+function startConversationReviewSession() {
+  const dueConversations = getGlobalConversationReviews();
+  if (!dueConversations.length) {
+    showToast("Gerade ist keine Sprech-Wiederholung fällig.");
+    return;
+  }
+  startConversationSession(dueConversations, "conversation-review");
 }
 
 function advanceConversationSession() {
@@ -2777,8 +2994,11 @@ function advanceConversationSession() {
     );
   }
   session.currentId = session.queue.shift();
-  session.revealed = false;
+  session.revealed = session.practiceMode === "shadowing";
+  session.hintVisible = false;
   session.locked = false;
+  session.awaitingAdvance = false;
+  session.lastRating = null;
   renderConversationQuiz();
 }
 
@@ -2801,13 +3021,14 @@ function insertConversationLater(conversationId, minDistance = 2) {
 function maybeInsertConversationReview() {
   const session = state.session;
   if (!session || session.kind !== "conversation") return;
+  if (session.reviewOnly || session.source === "hard-conversations") return;
   const excluded = new Set([
     ...session.cycleIds,
     ...session.queue,
     ...session.reviewedIds,
     session.currentId,
   ]);
-  const review = getEligibleConversations()
+  const review = getGlobalConversationReviews()
     .filter(
       (conversation) =>
         !excluded.has(conversation.id) && isConversationReviewDue(conversation),
@@ -2823,15 +3044,35 @@ function maybeInsertConversationReview() {
 function revealConversationAnswer() {
   const session = state.session;
   if (!session || session.kind !== "conversation" || session.locked) return;
+  if (activeMediaRecorder?.state === "recording") {
+    showToast("Stoppe zuerst deine Aufnahme, damit sie erhalten bleibt.");
+    return;
+  }
   session.revealed = true;
   renderConversationQuiz();
+}
+
+function toggleConversationHint() {
+  const session = state.session;
+  if (!session || session.kind !== "conversation" || session.revealed) return;
+  session.hintVisible = !session.hintVisible;
+  renderConversationQuiz();
+}
+
+function continueConversationSession() {
+  const session = state.session;
+  if (!session || session.kind !== "conversation" || !session.awaitingAdvance)
+    return;
+  maybeInsertConversationReview();
+  advanceConversationSession();
 }
 
 function renderConversationQuiz() {
   const session = state.session;
   if (!session || session.kind !== "conversation") return;
   const conversation = CONVERSATION_BY_ID.get(session.currentId);
-  const isReview = !session.cycleIds.includes(conversation.id);
+  const isReview =
+    session.reviewOnly || !session.cycleIds.includes(conversation.id);
   const total = session.cycleIds.length;
   const mastered = session.mastered.size;
   const confidence = formatPercent(
@@ -2842,6 +3083,15 @@ function renderConversationQuiz() {
   const existingRecording = recordedAudioUrl
     ? `src="${recordedAudioUrl}"`
     : "";
+  const modeLabel =
+    session.practiceMode === "shadowing"
+      ? "Shadowing"
+      : session.practiceMode === "guided"
+        ? "Geführt"
+        : "Rollenspiel";
+  const topic = CONVERSATION_TOPICS.find(
+    (entry) => entry.id === conversation.topic,
+  );
 
   document.body.classList.add("is-quizzing");
   app.innerHTML = `
@@ -2861,12 +3111,12 @@ function renderConversationQuiz() {
 
       <section class="conversation-practice-card" aria-labelledby="conversation-situation">
         <div class="conversation-card-head">
-          <span class="word-cycle-badge conversation-badge ${isReview ? "review" : ""}">${isReview ? "↻ Langzeit-Wiederholung" : `${conversation.level} · Gespräch ${session.cycleIds.indexOf(conversation.id) + 1}/${total}`}</span>
+          <span class="word-cycle-badge conversation-badge ${isReview ? "review" : ""}">${isReview ? "↻ Langzeit-Wiederholung" : `${conversation.level} · ${modeLabel} · ${session.cycleIds.indexOf(conversation.id) + 1}/${total}`}</span>
           <div class="word-confidence" aria-label="${strength} von 3 sicheren Durchgängen">${wordConfidenceDots(strength)}</div>
         </div>
 
         <div class="situation-heading">
-          <span>Situation</span>
+          <span>${topic?.icon || "会"} · ${topic?.title || "Situation"}</span>
           <h1 id="conversation-situation">${conversation.situation}</h1>
         </div>
 
@@ -2881,31 +3131,56 @@ function renderConversationQuiz() {
           <div><small>Deine Aufgabe</small><strong>${conversation.task}</strong></div>
         </div>
 
+        ${
+          session.practiceMode === "guided" && !session.revealed
+            ? `
+              <section class="conversation-coach${session.hintVisible ? " open" : ""}" aria-label="Satzbauhilfe">
+                <button type="button" data-action="toggle-conversation-hint" aria-expanded="${session.hintVisible}">
+                  <span aria-hidden="true">組</span><span><strong>${session.hintVisible ? "Satzbausteine ausblenden" : "Einen Satzbau-Hinweis öffnen"}</strong><small>Nur so viel Hilfe wie nötig</small></span><em>${session.hintVisible ? "×" : "+"}</em>
+                </button>
+                ${session.hintVisible ? `<div class="coach-chunks">${conversation.intonation.map(([text], index) => `<span><small>${index + 1}</small><b lang="ja">${text}</b></span>`).join("")}</div>` : ""}
+              </section>
+            `
+            : ""
+        }
+
         <section class="recording-studio" aria-labelledby="recording-title">
-          <div>
+          <div class="recording-copy">
             <small id="recording-title">Deine Stimme · freiwillig</small>
-            <strong>Antworte zuerst selbst – dann vergleiche.</strong>
-            <p id="recording-status">Die Aufnahme bleibt lokal und wird beim nächsten Gespräch gelöscht.</p>
+            <strong>${session.practiceMode === "shadowing" ? "Höre einen Abschnitt und sprich direkt mit oder knapp danach." : "Antworte laut – möglichst ohne den deutschen Satz abzulesen."}</strong>
+            <p id="recording-status">Die Aufnahme bleibt nur lokal und wird bei der nächsten Situation gelöscht.</p>
           </div>
-          <button class="record-button" type="button" data-action="toggle-recording"><span aria-hidden="true">●</span> Aufnehmen</button>
-          <audio id="conversation-recording" controls ${existingRecording} ${recordedAudioUrl ? "" : "hidden"}></audio>
+          <div class="recording-meter" aria-hidden="true">
+            <span class="recording-visualizer"><i></i><i></i><i></i><i></i><i></i></span>
+            <b id="recording-time">${activeMediaRecorder?.state === "recording" ? "0 s" : "Bereit"}</b>
+          </div>
+          <button class="record-button" type="button" data-action="toggle-recording"><span aria-hidden="true">●</span> ${recordedAudioUrl ? "Neu aufnehmen" : "Aufnehmen"}</button>
+          <div class="own-recording" ${recordedAudioUrl ? "" : "hidden"}><small>Deine Aufnahme</small><audio id="conversation-recording" controls ${existingRecording}></audio></div>
         </section>
 
         ${
           session.revealed
             ? `
               <div class="model-answer" aria-live="polite">
-                <div class="model-answer-heading"><span>Musterantwort</span><div><button type="button" data-action="speak-japanese" data-speech="${conversation.target}" data-rate="0.9"><span aria-hidden="true">▶</span> Normal</button><button type="button" data-action="speak-japanese" data-speech="${conversation.target}" data-rate="0.68"><span aria-hidden="true">◐</span> Langsam</button></div></div>
+                <div class="model-answer-heading"><span>Natürliches Antwortmodell</span><div><button type="button" data-action="speak-japanese" data-speech="${conversation.target}" data-rate="0.9"><span aria-hidden="true">▶</span> Natürlich</button><button type="button" data-action="speak-japanese" data-speech="${conversation.target}" data-rate="0.62"><span aria-hidden="true">◐</span> Langsam</button></div></div>
                 <strong lang="ja">${conversation.target}</strong>
                 <span class="kana-reading" lang="ja">${conversation.reading}</span>
                 <p>${conversation.german}</p>
+                ${conversation.alternative ? `<div class="answer-alternative"><small>Auch natürlich möglich</small><span lang="ja">${conversation.alternative}</span><button type="button" data-action="speak-japanese" data-speech="${conversation.alternative}" data-rate="0.86" aria-label="Alternative Antwort anhören">▶</button></div>` : ""}
               </div>
+
+              <section class="chunk-shadowing" aria-label="Antwort in Sinnabschnitten üben">
+                <div><small>Abschnitt für Abschnitt</small><strong>Hören → kurz pausieren → mit gleichem Rhythmus nachsprechen</strong></div>
+                <div class="chunk-buttons">
+                  ${conversation.intonation.map(([text, tone], index) => `<button type="button" data-action="speak-japanese" data-speech="${text}" data-rate="0.72"><span>${index + 1}</span><b lang="ja">${text}</b><em aria-hidden="true">${{ rise: "↗", high: "→", fall: "↘", focus: "◆", question: "↗" }[tone] || "→"}</em></button>`).join("")}
+                </div>
+              </section>
 
               <div class="speech-analysis-grid">
                 <section class="intonation-panel">
-                  <div class="analysis-heading"><span aria-hidden="true">↗↘</span><div><small>Satzmelodie · Richtwert</small><strong>Hohe und tiefe Tonlagen</strong></div></div>
+                  <div class="analysis-heading"><span aria-hidden="true">↗↘</span><div><small>Phrasenkontur · Richtwert</small><strong>Informationsfluss und Satzschluss</strong></div></div>
                   <div class="intonation-track">${renderIntonationPattern(conversation.intonation)}</div>
-                  <p>↗ anheben · → hoch halten · ↘ ruhig abfallen · ◆ Information hervorheben</p>
+                  <p>↗ neu ansetzen · → tragen · ↘ abschließen · ◆ Information hervorheben. Das ist keine wortgenaue Pitch-Akzent-Notation.</p>
                 </section>
                 <section class="mora-panel">
                   <div class="analysis-heading"><span aria-hidden="true">拍</span><div><small>Mora-Rhythmus</small><strong>Jede Kachel bekommt einen Schlag</strong></div></div>
@@ -2919,35 +3194,30 @@ function renderConversationQuiz() {
               </div>
 
               <div class="conversation-assessment">
-                <div><small>Sei ehrlich – wie klang deine Antwort?</small><strong>Konntest du sie verständlich und im Rhythmus sprechen?</strong></div>
-                <div>
-                  <button class="practice-more-button" type="button" data-action="assess-conversation" data-confident="false">Noch üben</button>
-                  <button class="confident-button" type="button" data-action="assess-conversation" data-confident="true">Sicher gesprochen <span aria-hidden="true">✓</span></button>
+                <div class="assessment-heading"><small>Deine ehrliche Bewertung</small><strong>Vergleiche Inhalt, Verständlichkeit und Rhythmus – nicht deine Stimme.</strong></div>
+                <div class="speaking-rubric" role="group" aria-label="Sprechleistung bewerten">
+                  <button class="practice-more-button" type="button" data-action="assess-conversation" data-score="1"><span>1</span><strong>Noch üben</strong><small>Inhalt fehlte oder schwer verständlich</small></button>
+                  <button class="almost-button" type="button" data-action="assess-conversation" data-score="2"><span>2</span><strong>Fast sicher</strong><small>Verständlich, aber noch stockend</small></button>
+                  <button class="confident-button" type="button" data-action="assess-conversation" data-score="3"><span>3</span><strong>Sicher</strong><small>Inhalt, Takt und Satzschluss sitzen</small></button>
                 </div>
                 <p class="conversation-feedback" aria-live="polite"></p>
+                <button class="conversation-continue-button" type="button" data-action="continue-conversation" hidden>Weiter zur nächsten Situation <span aria-hidden="true">→</span></button>
               </div>
             `
             : `
               <button class="reveal-conversation-button" type="button" data-action="reveal-conversation-answer">
                 Musterantwort & Aussprache öffnen <span aria-hidden="true">→</span>
               </button>
-              <p class="conversation-first-tip"><span aria-hidden="true">💡</span> Formuliere laut, auch wenn du noch nicht jedes Wort kennst. Erst danach öffnest du das Modell.</p>
+              <p class="conversation-first-tip"><span aria-hidden="true">灯</span> Formuliere laut, auch wenn du noch nicht jedes Wort kennst. Ziel ist eine passende Reaktion, nicht das Erraten exakt dieses Modells.</p>
             `
         }
       </section>
     </div>
   `;
   window.scrollTo({ top: 0, behavior: "instant" });
-  if (session.revealed) {
-    requestAnimationFrame(() =>
-      document
-        .querySelector('[data-action="assess-conversation"][data-confident="true"]')
-        ?.focus({ preventScroll: true }),
-    );
-  }
 }
 
-function assessConversation(wasConfident) {
+function assessConversation(rating) {
   const session = state.session;
   if (
     !session ||
@@ -2957,22 +3227,31 @@ function assessConversation(wasConfident) {
   ) {
     return;
   }
+  const numericRating = Math.max(1, Math.min(3, Number(rating) || 1));
+  const wasConfident = numericRating === 3;
   const conversation = CONVERSATION_BY_ID.get(session.currentId);
-  const isReview = !session.cycleIds.includes(conversation.id);
+  const isReview =
+    session.reviewOnly || !session.cycleIds.includes(conversation.id);
   session.locked = true;
+  session.awaitingAdvance = true;
+  session.lastRating = numericRating;
   session.attempts += 1;
   if (wasConfident) {
     session.correctAttempts += 1;
+  } else if (numericRating === 2) {
+    session.partialAttempts += 1;
   } else {
     session.wrongAttempts += 1;
     session.mistakesById[conversation.id] =
       (session.mistakesById[conversation.id] || 0) + 1;
   }
-  const newStrength = recordConversationAttempt(conversation, wasConfident);
+  const newStrength = recordConversationAttempt(conversation, numericRating);
 
   if (isReview) {
-    if (wasConfident) session.reviewedIds.add(conversation.id);
-    else insertConversationLater(conversation.id, 2);
+    if (wasConfident) {
+      session.reviewedIds.add(conversation.id);
+      if (session.reviewOnly) session.mastered.add(conversation.id);
+    } else insertConversationLater(conversation.id, 2);
   } else if (
     wasConfident &&
     (session.maintenance || newStrength >= 3)
@@ -2989,20 +3268,27 @@ function assessConversation(wasConfident) {
   );
   const card = document.querySelector(".conversation-practice-card");
   const feedback = document.querySelector(".conversation-feedback");
-  card?.classList.add(wasConfident ? "conversation-secure" : "conversation-repeat");
+  card?.classList.add(
+    wasConfident
+      ? "conversation-secure"
+      : numericRating === 2
+        ? "conversation-almost"
+        : "conversation-repeat",
+  );
   if (feedback) {
     feedback.textContent = wasConfident
       ? newStrength >= 3 || session.maintenance
         ? "Sicher – diese Situation wandert in die Langzeit-Wiederholung."
         : `Guter Durchgang – noch ${3 - newStrength}× sicher sprechen.`
-      : "Gute Selbsteinschätzung – diese Situation kommt gleich noch einmal.";
+      : numericRating === 2
+        ? "Fast geschafft – die Situation bleibt im Zyklus, bis sie ohne Stocken sitzt."
+        : "Gute Selbsteinschätzung – höre die Abschnitte nochmals; die Situation kommt wieder.";
   }
-
-  state.timer = window.setTimeout(() => {
-    if (!state.session || state.session !== session) return;
-    maybeInsertConversationReview();
-    advanceConversationSession();
-  }, 1050);
+  const continueButton = document.querySelector(".conversation-continue-button");
+  if (continueButton) {
+    continueButton.hidden = false;
+    continueButton.focus({ preventScroll: true });
+  }
 }
 
 function finishConversationSession() {
@@ -3020,6 +3306,7 @@ function finishConversationSession() {
     total: session.cycleIds.length,
     attempts: session.attempts,
     correctAttempts: session.correctAttempts,
+    partialAttempts: session.partialAttempts,
     wrongAttempts: session.wrongAttempts,
     mistakesById: { ...session.mistakesById },
     accuracy: formatPercent(session.correctAttempts, session.attempts),
@@ -3693,15 +3980,15 @@ function renderConversationResult() {
   const conversations = result.itemIds
     .map((id) => CONVERSATION_BY_ID.get(id))
     .filter(Boolean);
-  const learnedTotal = getConversationStats().learned;
   const focusedPractice = result.source === "hard-conversations";
+  const reviewPractice = result.source === "conversation-review";
   app.innerHTML = `
     <div class="result-view conversation-result-view">
       <section class="result-card word-result-card conversation-result-card" aria-labelledby="result-title">
         <div class="result-seal" aria-hidden="true">話</div>
-        <span class="eyebrow">${focusedPractice ? "Schwierige Situationen trainiert" : result.maintenance ? "Gespräche aufgefrischt" : "Sprechgruppe geschafft"}</span>
-        <h1 id="result-title">${focusedPractice ? "Sprachhürden geknackt!" : result.maintenance ? "Natürlich reagiert!" : `${result.total} Situationen sitzen!`}</h1>
-        <p>${focusedPractice ? "Du hast genau die Situationen wiederholt, bei denen Rhythmus oder Formulierung noch unsicher waren." : result.maintenance ? "Diese Reaktionen sind wieder frisch und kehren später erneut zurück." : "Du kannst in diesen Situationen verständlich reagieren. Sie bleiben in deiner Langzeit-Wiederholung und werden mit neuen Gesprächen vermischt."}</p>
+        <span class="eyebrow">${reviewPractice ? "Fällige Gespräche wiederholt" : focusedPractice ? "Schwierige Situationen trainiert" : result.maintenance ? "Gespräche aufgefrischt" : "Sprechgruppe geschafft"}</span>
+        <h1 id="result-title">${reviewPractice ? "Im Gespräch geblieben!" : focusedPractice ? "Sprachhürden geknackt!" : result.maintenance ? "Natürlich reagiert!" : `${result.total} Situationen sitzen!`}</h1>
+        <p>${reviewPractice ? "Die fälligen Reaktionen sind wieder frisch. Ihr nächster Abstand wächst mit jedem sicheren Durchgang." : focusedPractice ? "Du hast genau die Situationen wiederholt, bei denen Rhythmus oder Formulierung noch unsicher waren." : result.maintenance ? "Diese Reaktionen sind wieder frisch und kehren später erneut zurück." : "Du kannst in diesen Situationen verständlich reagieren. Sie bleiben in deiner Langzeit-Wiederholung und werden mit neuen Gesprächen vermischt."}</p>
 
         <div class="learned-conversation-list" aria-label="Situationen dieser Runde">
           ${conversations
@@ -3714,14 +4001,14 @@ function renderConversationResult() {
         </div>
 
         <div class="result-stats">
-          <div class="result-stat"><strong>${learnedTotal}</strong><span>Insgesamt sicher</span></div>
+          <div class="result-stat"><strong>${result.partialAttempts || 0}</strong><span>Fast sicher</span></div>
           <div class="result-stat"><strong>${result.accuracy}</strong><span>Sicher gesprochen</span></div>
           <div class="result-stat"><strong>${formatDuration(result.durationSeconds)}</strong><span>Sprechzeit</span></div>
         </div>
 
         <div class="result-actions">
           <button class="secondary-button" type="button" data-action="home">Stufe & Aussprache-Lab</button>
-          <button class="primary-button" type="button" data-action="${focusedPractice ? "retry-conversation-session" : "start-conversation-session"}">${focusedPractice ? "Diese Situationen nochmals" : "Nächste Gesprächsgruppe"} →</button>
+          <button class="primary-button" type="button" data-action="${reviewPractice ? "start-conversation-review" : focusedPractice ? "retry-conversation-session" : "start-conversation-session"}">${reviewPractice ? "Weitere fällige Gespräche" : focusedPractice ? "Diese Situationen nochmals" : "Nächste Gesprächsgruppe"} →</button>
         </div>
       </section>
     </div>
@@ -3988,6 +4275,66 @@ document.addEventListener("click", (event) => {
     );
   }
 
+  if (action === "set-conversation-mode") {
+    const scrollPosition = window.scrollY;
+    state.conversationPracticeMode = trigger.dataset.mode;
+    saveData();
+    renderHome();
+    requestAnimationFrame(() =>
+      window.scrollTo({ top: scrollPosition, behavior: "instant" }),
+    );
+  }
+
+  if (action === "toggle-conversation-topic") {
+    const scrollPosition = window.scrollY;
+    const topicId = trigger.dataset.topic;
+    if (topicId === "all") {
+      state.selectedConversationTopics = new Set(["all"]);
+      state.includedConversationIds.clear();
+      state.excludedConversationIds.clear();
+    } else {
+      state.selectedConversationTopics.delete("all");
+      if (state.selectedConversationTopics.has(topicId))
+        state.selectedConversationTopics.delete(topicId);
+      else state.selectedConversationTopics.add(topicId);
+      if (!state.selectedConversationTopics.size)
+        state.selectedConversationTopics.add("all");
+    }
+    saveData();
+    renderHome();
+    requestAnimationFrame(() =>
+      window.scrollTo({ top: scrollPosition, behavior: "instant" }),
+    );
+  }
+
+  if (action === "toggle-conversation") {
+    const scrollPosition = window.scrollY;
+    const conversationId = trigger.dataset.conversation;
+    const conversation = CONVERSATION_BY_ID.get(conversationId);
+    if (conversation) {
+      const selectedByTopic =
+        state.selectedConversationTopics.has("all") ||
+        state.selectedConversationTopics.has(conversation.topic);
+      const currentlySelected = getSelectedConversationIdSet().has(
+        conversationId,
+      );
+      if (currentlySelected) {
+        state.includedConversationIds.delete(conversationId);
+        state.excludedConversationIds.add(conversationId);
+      } else {
+        state.excludedConversationIds.delete(conversationId);
+        if (!selectedByTopic)
+          state.includedConversationIds.add(conversationId);
+      }
+      saveData();
+      renderHome();
+      requestAnimationFrame(() => {
+        window.scrollTo({ top: scrollPosition, behavior: "instant" });
+        document.querySelector(".conversation-picker")?.setAttribute("open", "");
+      });
+    }
+  }
+
   if (action === "manga-preset") {
     const basicRows = GROUPS.filter((group) => group.category === "basic").map(
       (group) => group.id,
@@ -4059,6 +4406,8 @@ document.addEventListener("click", (event) => {
   }
   if (action === "start-kanji-session") startKanjiSession();
   if (action === "start-conversation-session") startConversationSession();
+  if (action === "start-conversation-review")
+    startConversationReviewSession();
   if (action === "practice-hard-conversations")
     startHardConversationSession();
   if (
@@ -4087,8 +4436,10 @@ document.addEventListener("click", (event) => {
     submitKanjiWordAnswer("", true);
   if (action === "reveal-kanji-answer") submitKanjiAnswer("", true);
   if (action === "reveal-conversation-answer") revealConversationAnswer();
+  if (action === "toggle-conversation-hint") toggleConversationHint();
   if (action === "assess-conversation")
-    assessConversation(trigger.dataset.confident === "true");
+    assessConversation(trigger.dataset.score);
+  if (action === "continue-conversation") continueConversationSession();
   if (action === "speak-japanese")
     speakJapanese(trigger.dataset.speech || "", trigger.dataset.rate);
   if (action === "toggle-recording") toggleConversationRecording();
@@ -4107,6 +4458,24 @@ document.addEventListener("click", (event) => {
 });
 
 document.addEventListener("input", (event) => {
+  if (event.target.matches("#conversation-search")) {
+    const query = event.target.value.trim().toLowerCase();
+    let visible = 0;
+    document
+      .querySelectorAll(
+        "#individual-conversation-grid .individual-conversation",
+      )
+      .forEach((conversation) => {
+        const matches = !query || conversation.dataset.search.includes(query);
+        conversation.hidden = !matches;
+        if (matches) visible += 1;
+      });
+    const count = document.querySelector("#conversation-visible-count");
+    if (count) count.textContent = String(visible);
+    const empty = document.querySelector("#conversation-search-empty");
+    if (empty) empty.hidden = visible > 0;
+    return;
+  }
   if (!event.target.matches("#word-search")) return;
   const query = event.target.value.trim().toLowerCase();
   let visible = 0;
@@ -4117,6 +4486,23 @@ document.addEventListener("input", (event) => {
   });
   const empty = document.querySelector("#word-search-empty");
   if (empty) empty.hidden = visible > 0;
+});
+
+document.addEventListener("keydown", (event) => {
+  const session = state.session;
+  if (!session || session.kind !== "conversation") return;
+  if (event.metaKey || event.ctrlKey || event.altKey) return;
+  if (event.target.closest("button, input, textarea, audio, a")) return;
+  if (event.key === "Enter") {
+    event.preventDefault();
+    if (session.awaitingAdvance) continueConversationSession();
+    else if (!session.revealed) revealConversationAnswer();
+    return;
+  }
+  if (session.revealed && !session.locked && ["1", "2", "3"].includes(event.key)) {
+    event.preventDefault();
+    assessConversation(event.key);
+  }
 });
 
 app.addEventListener("submit", (event) => {
