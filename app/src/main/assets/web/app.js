@@ -367,6 +367,7 @@ const DEFAULT_DATA = {
   kanjiWordSessions: [],
   conversationSessions: [],
   grammarSessions: [],
+  activeKanaSession: null,
   wordPromptCount: 0,
   kanjiPromptCount: 0,
   kanjiWordPromptCount: 0,
@@ -590,6 +591,7 @@ function loadData() {
       grammarSessions: Array.isArray(parsed.grammarSessions)
         ? parsed.grammarSessions
         : [],
+      activeKanaSession: parsed.activeKanaSession || null,
       settings: {
         ...DEFAULT_DATA.settings,
         ...(parsed.settings || {}),
@@ -2438,6 +2440,58 @@ function renderGrammarSetup() {
   `;
 }
 
+function getActiveKanaSessionSummary() {
+  const saved = data.activeKanaSession;
+  if (!saved || !Array.isArray(saved.itemIds) || !saved.itemIds.length) {
+    return null;
+  }
+  const masteredIds = Array.isArray(saved.mastered) ? saved.mastered : [];
+  const queueIds = Array.isArray(saved.queue)
+    ? saved.queue.filter((id) => KANA_BY_ID.has(id))
+    : [];
+  const total = saved.itemIds.filter((id) => KANA_BY_ID.has(id)).length;
+  if (!total) return null;
+  const mastered = masteredIds.filter((id) => KANA_BY_ID.has(id)).length;
+  const remainingFromQueue = queueIds.length;
+  const remainingFromTargets = saved.itemIds.filter(
+    (id) => KANA_BY_ID.has(id) && !masteredIds.includes(id),
+  ).length;
+  const remaining = Math.max(remainingFromQueue, remainingFromTargets, 0);
+  if (remaining <= 0) return null;
+  return {
+    mastered: Math.min(mastered, total),
+    total,
+    remaining: Math.min(remaining, total),
+    source: saved.source || "selection",
+    savedAt: Number(saved.savedAt || 0),
+  };
+}
+
+function renderKanaResumeCard() {
+  const summary = getActiveKanaSessionSummary();
+  if (!summary) return "";
+  const sourceLabel =
+    summary.source === "hard"
+      ? "Schwierige Zeichen"
+      : summary.source === "kana-review"
+        ? "Langzeit-Wiederholung"
+        : "Deine Auswahl";
+  return `
+    <div class="srs-pot-card kana-resume-card" role="status">
+      <div class="srs-pot-icon" aria-hidden="true">▶</div>
+      <div>
+        <span class="eyebrow">Offene Kana-Einheit</span>
+        <strong>${summary.mastered} von ${summary.total} Zeichen gemeistert</strong>
+        <p>Noch ${summary.remaining} übrig · ${sourceLabel}. Du kannst genau dort weitermachen, wo du aufgehört hast – auch nach App- oder Browser-Neustart.</p>
+      </div>
+      <div class="kana-resume-actions">
+        <button class="primary-button" type="button" data-action="resume-kana-session">Weitermachen</button>
+        <button class="secondary-button" type="button" data-action="discard-kana-session">Verwerfen</button>
+      </div>
+    </div>
+  `;
+}
+
 function renderKanaSetup() {
   const dueKana = getGlobalKanaReviews();
   const learnedKana = getGlobalKanaReviews(false);
@@ -2450,6 +2504,8 @@ function renderKanaSetup() {
         </div>
         <p>Du kannst beliebig viele Reihen kombinieren. Im Mix-Modus lernst du beide Schriftsysteme gleichzeitig.</p>
       </div>
+
+      ${renderKanaResumeCard()}
 
       <div class="srs-pot-card kana-srs-card">
         <div class="srs-pot-icon" aria-hidden="true">↻</div>
@@ -5192,13 +5248,98 @@ function finishKanjiSession() {
   renderKanjiResult();
 }
 
-function startSession(items, source = "selection") {
-  if (!items.length) {
-    showToast("Wähle zuerst mindestens eine Reihe aus.");
-    return;
+function serializeActiveKanaSession(session, queueOverride = null) {
+  const queue = Array.isArray(queueOverride)
+    ? queueOverride
+    : [...session.queue];
+  return {
+    kind: "kana",
+    source: session.source || "selection",
+    sentenceMode: Boolean(session.sentenceMode),
+    itemIds: [...session.itemIds],
+    targetIds: [...session.targetIds],
+    queue: queue.filter((id) => KANA_BY_ID.has(id)),
+    mastered: [...session.mastered],
+    reviewedIds: [...session.reviewedIds],
+    reviewOnly: Boolean(session.reviewOnly),
+    answersSinceReview: Number(session.answersSinceReview || 0),
+    attempts: Number(session.attempts || 0),
+    correctAttempts: Number(session.correctAttempts || 0),
+    wrongAttempts: Number(session.wrongAttempts || 0),
+    mistakesById: { ...(session.mistakesById || {}) },
+    startedAt: Number(session.startedAt || Date.now()),
+    savedAt: Date.now(),
+    mode: state.mode,
+    selectedRows: [...state.selectedRows],
+    kanaSentenceMode: Boolean(state.kanaSentenceMode),
+  };
+}
+
+function buildKanaSessionSnapshot(session) {
+  if (!session || session.kind !== "kana") return null;
+
+  const queue = [...session.queue];
+  const mastered = new Set(session.mastered);
+  const reviewedIds = new Set(session.reviewedIds);
+  const mistakesById = { ...(session.mistakesById || {}) };
+  let attempts = Number(session.attempts || 0);
+  let correctAttempts = Number(session.correctAttempts || 0);
+  let wrongAttempts = Number(session.wrongAttempts || 0);
+
+  if (session.feedback) {
+    const { kanaId, wasCorrect, isInjectedReview } = session.feedback;
+    // Antwort ist bereits in Stats/mastered verbucht; offene Karte
+    // gehört nur bei Fehler wieder in die Warteschlange.
+    if (!wasCorrect && kanaId && !queue.includes(kanaId)) {
+      const minIndex = Math.min(2, queue.length);
+      const maxIndex = Math.min(2 + 3, queue.length);
+      const insertionIndex =
+        minIndex + Math.floor(Math.random() * (maxIndex - minIndex + 1));
+      queue.splice(insertionIndex, 0, kanaId);
+    }
+    if (wasCorrect && isInjectedReview && kanaId) {
+      reviewedIds.add(kanaId);
+    }
+  } else if (session.currentId && !queue.includes(session.currentId)) {
+    queue.unshift(session.currentId);
   }
 
+  const filteredQueue = queue.filter((id) => KANA_BY_ID.has(id));
+  if (!filteredQueue.length) return null;
+
+  return serializeActiveKanaSession(
+    {
+      ...session,
+      mastered,
+      reviewedIds,
+      mistakesById,
+      attempts,
+      correctAttempts,
+      wrongAttempts,
+      queue: filteredQueue,
+    },
+    filteredQueue,
+  );
+}
+
+function snapshotActiveKanaSession() {
+  const session = state.session;
+  if (!session || session.kind !== "kana") return false;
+  const snapshot = buildKanaSessionSnapshot(session);
+  data.activeKanaSession = snapshot;
+  saveData();
+  return Boolean(snapshot);
+}
+
+function clearActiveKanaSession({ persist = true } = {}) {
+  if (!data.activeKanaSession) return;
+  data.activeKanaSession = null;
+  if (persist) saveData();
+}
+
+function beginKanaSession(items, source = "selection") {
   clearTimeout(state.timer);
+  clearActiveKanaSession({ persist: false });
   const ids = shuffle(items.map((item) => item.id));
   state.session = {
     kind: "kana",
@@ -5223,6 +5364,108 @@ function startSession(items, source = "selection") {
   };
   state.view = "quiz";
   advanceSession();
+  snapshotActiveKanaSession();
+}
+
+function startSession(items, source = "selection") {
+  if (!items.length) {
+    showToast("Wähle zuerst mindestens eine Reihe aus.");
+    return;
+  }
+
+  if (data.activeKanaSession && getActiveKanaSessionSummary()) {
+    requestConfirmation({
+      title: "Neue Kana-Einheit starten?",
+      message:
+        "Du hast eine unvollendete Kana-Einheit. Neu starten verwirft den Zwischenstand dieser Runde. Deine Zeichen-Statistik bleibt erhalten.",
+      acceptLabel: "Neu starten",
+      onAccept: () => beginKanaSession(items, source),
+    });
+    return;
+  }
+
+  beginKanaSession(items, source);
+}
+
+function resumeActiveKanaSession() {
+  const saved = data.activeKanaSession;
+  if (!saved || !Array.isArray(saved.itemIds) || !saved.itemIds.length) {
+    clearActiveKanaSession();
+    showToast("Keine gespeicherte Kana-Einheit gefunden.");
+    renderHome();
+    return;
+  }
+
+  if (saved.mode) state.mode = saved.mode;
+  if (Array.isArray(saved.selectedRows) && saved.selectedRows.length) {
+    state.selectedRows = new Set(saved.selectedRows);
+  }
+  if (typeof saved.kanaSentenceMode === "boolean") {
+    state.kanaSentenceMode = saved.kanaSentenceMode;
+  }
+
+  const mastered = new Set(
+    (saved.mastered || []).filter((id) => KANA_BY_ID.has(id)),
+  );
+  let queue = (saved.queue || []).filter((id) => KANA_BY_ID.has(id));
+  if (!queue.length) {
+    queue = shuffle(
+      saved.itemIds.filter((id) => KANA_BY_ID.has(id) && !mastered.has(id)),
+    );
+  }
+  if (!queue.length) {
+    clearActiveKanaSession();
+    showToast("Diese Kana-Einheit ist bereits fertig.");
+    renderHome();
+    return;
+  }
+
+  clearTimeout(state.timer);
+  releaseConversationMedia();
+  state.session = {
+    kind: "kana",
+    source: saved.source || "selection",
+    sentenceMode: Boolean(saved.sentenceMode),
+    itemIds: saved.itemIds.filter((id) => KANA_BY_ID.has(id)),
+    targetIds: new Set(
+      (saved.targetIds || saved.itemIds).filter((id) => KANA_BY_ID.has(id)),
+    ),
+    queue,
+    currentId: null,
+    mastered,
+    reviewedIds: new Set(
+      (saved.reviewedIds || []).filter((id) => KANA_BY_ID.has(id)),
+    ),
+    reviewOnly: Boolean(saved.reviewOnly),
+    answersSinceReview: Number(saved.answersSinceReview || 0),
+    attempts: Number(saved.attempts || 0),
+    correctAttempts: Number(saved.correctAttempts || 0),
+    wrongAttempts: Number(saved.wrongAttempts || 0),
+    mistakesById: { ...(saved.mistakesById || {}) },
+    startedAt: Number(saved.startedAt || Date.now()),
+    locked: false,
+    awaitingAdvance: false,
+    feedback: null,
+  };
+  state.view = "quiz";
+  advanceSession();
+  snapshotActiveKanaSession();
+  showToast("Gespeicherte Kana-Einheit fortgesetzt.");
+}
+
+function discardActiveKanaSession() {
+  if (!data.activeKanaSession) return;
+  requestConfirmation({
+    title: "Gespeicherte Einheit verwerfen?",
+    message:
+      "Die offene Kana-Lerneinheit wird gelöscht. Deine Zeichen-Statistik bleibt erhalten.",
+    acceptLabel: "Verwerfen",
+    onAccept: () => {
+      clearActiveKanaSession();
+      renderHome();
+      showToast("Gespeicherte Einheit verworfen.");
+    },
+  });
 }
 
 function startKanaReviewSession() {
@@ -5466,6 +5709,7 @@ function completeKanaAnswerAdvance(session) {
   if (!wasCorrect) insertKanaLater(kanaId, 2);
   if (!isReview || isInjectedReview) maybeInsertKanaReview();
   advanceSession();
+  if (state.session?.kind === "kana") snapshotActiveKanaSession();
 }
 
 function finishSession() {
@@ -5492,6 +5736,7 @@ function finishSession() {
     wrong: result.wrongAttempts,
   });
   data.sessions = data.sessions.slice(-365);
+  data.activeKanaSession = null;
   saveData();
 
   state.lastResult = result;
@@ -5764,6 +6009,29 @@ function requestConfirmation({ title, message, acceptLabel, onAccept }) {
 }
 
 function quitSession() {
+  if (state.session?.kind === "kana") {
+    requestConfirmation({
+      title: "Später fortsetzen?",
+      message:
+        "Dein Zwischenstand wird gespeichert. Du kannst die Kana-Einheit jederzeit genau dort fortsetzen, wo du aufgehört hast.",
+      acceptLabel: "Speichern & beenden",
+      onAccept: () => {
+        clearTimeout(state.timer);
+        state.timer = null;
+        const saved = snapshotActiveKanaSession();
+        releaseConversationMedia();
+        state.session = null;
+        renderHome();
+        showToast(
+          saved
+            ? "Zwischenstand gespeichert – weiter geht’s, wenn du magst."
+            : "Lerneinheit beendet.",
+        );
+      },
+    });
+    return;
+  }
+
   requestConfirmation({
     title: "Lerneinheit beenden?",
     message: "Der Fortschritt dieser laufenden Runde geht verloren. Deine bisherige Gesamtstatistik bleibt gespeichert.",
@@ -5776,6 +6044,8 @@ function quitSession() {
     },
   });
 }
+
+
 
 function resetProgress() {
   requestConfirmation({
@@ -5804,6 +6074,7 @@ function resetProgress() {
       state.selectedRows = new Set(["vowels"]);
       state.session = null;
       state.lastResult = null;
+      data.activeKanaSession = null;
       saveData();
       renderHome();
       showToast("Dein Fortschritt wurde zurückgesetzt.");
@@ -6237,6 +6508,8 @@ document.addEventListener("click", (event) => {
   }
 
   if (action === "start-session") startSession(getItemsForSelection());
+  if (action === "resume-kana-session") resumeActiveKanaSession();
+  if (action === "discard-kana-session") discardActiveKanaSession();
   if (action === "start-kana-review") startKanaReviewSession();
   if (action === "start-word-session") startWordSession();
   if (action === "start-word-review") startWordReviewSession();
@@ -6507,6 +6780,16 @@ window.addEventListener("kana-garten-word-mastery-change", (event) => {
   reconcileWordReviewEligibility();
   saveData();
   if (state.view === "home") renderHome();
+});
+
+function persistKanaSessionOnBackground() {
+  if (state.session?.kind === "kana") snapshotActiveKanaSession();
+}
+
+window.addEventListener("pagehide", persistKanaSessionOnBackground);
+window.addEventListener("beforeunload", persistKanaSessionOnBackground);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") persistKanaSessionOnBackground();
 });
 
 renderHome();
