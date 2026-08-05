@@ -4278,6 +4278,22 @@ html.android-app .kana-quiz-stage {
   white-space: nowrap;
 }
 
+.kana-resume-card {
+  background: color-mix(in srgb, var(--peach, #f3c9a8) 42%, var(--paper-light));
+}
+
+.kana-resume-actions {
+  display: grid;
+  gap: 8px;
+  min-width: 148px;
+}
+
+.kana-resume-actions .primary-button,
+.kana-resume-actions .secondary-button {
+  min-height: 44px;
+  white-space: nowrap;
+}
+
 .scenario-heading {
   display: flex;
   align-items: end;
@@ -5013,7 +5029,13 @@ html.android-app .kana-quiz-stage {
     font-size: 21px;
   }
 
-  .srs-pot-card .secondary-button {
+  .kana-resume-actions {
+    grid-column: 1 / -1;
+    grid-template-columns: 1fr 1fr;
+    min-width: 0;
+  }
+
+  .srs-pot-card > .secondary-button {
     grid-column: 1 / -1;
     width: 100%;
   }

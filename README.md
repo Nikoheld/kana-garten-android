@@ -12,6 +12,7 @@ Eine vollständige, offlinefähige Android-App zum Lesen, Verstehen und Sprechen
 
 ## Funktionen
 
+- abgebrochene Kana-Lerneinheiten werden zwischengespeichert und lassen sich später exakt fortsetzen – ideal, wenn viele Zeichen auf einmal zu viel sind
 - Hiragana und Katakana, frei kombinierbare Reihen und Eselsbrücken; optional werden Zielzeichen in kurzen Sätzen markiert und nach der Antwort mit vollständiger Lesung und deutscher Übersetzung erklärt
 - Kana- und Kanji-Satzkarten bleiben nach jeder Antwort vollständig sichtbar und wechseln erst nach bewusstem Tippen auf „Weiter“
 - 65 kombinierbare Alltagsszenarien mit 750+ Kana-Wörtern, Einzelwortauswahl und globalem Spaced-Repetition-Topf
